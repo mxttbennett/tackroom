@@ -549,6 +549,9 @@ func checkHermesHooks(home string, cfg config) checkResult {
 
 	hooksRaw, ok := raw["hooks"]
 	if !ok {
+		if hooks, _ := desiredHooksForAgent(cfg, agentHermes); len(hooks) == 0 {
+			return checkResult{"hermes hooks", checkStatusPass, "no hooks configured for hermes"}
+		}
 		return checkResult{"hermes hooks", checkStatusWarn, "no hooks section configured"}
 	}
 

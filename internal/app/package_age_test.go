@@ -75,7 +75,7 @@ pnpm add @scope/pkg@1.2.3
 	}
 }
 
-func TestCheckExternalPackageAgeFailsFreshPackage(t *testing.T) {
+func TestCheckExternalPackageAgeWarnsFreshPackage(t *testing.T) {
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	cfg := config{MCPServers: []mcpServerConfig{{
 		Name: "fresh", Enabled: true, Command: mcpTestUVXCommand, Args: []string{"fresh-pkg@latest"},
@@ -83,8 +83,8 @@ func TestCheckExternalPackageAgeFailsFreshPackage(t *testing.T) {
 	got := checkExternalPackageAgeWithResolver(t.TempDir(), cfg, false, now, func(ref packageReference) (packageRelease, error) {
 		return packageRelease{Version: "1.0.0", Released: now.Add(-48 * time.Hour)}, nil
 	})
-	if got.status != checkStatusFail || !strings.Contains(got.detail, "newer than 3 days") {
-		t.Fatalf("got %#v, want fresh package failure", got)
+	if got.status != checkStatusWarn || !strings.Contains(got.detail, "newer than 3 days") {
+		t.Fatalf("got %#v, want fresh package warning", got)
 	}
 }
 
@@ -115,15 +115,15 @@ func TestCheckExternalPackageAgeAllowsCodexPackage(t *testing.T) {
 	}
 }
 
-func TestCheckExternalPackageAgeFailsRegistryOutage(t *testing.T) {
+func TestCheckExternalPackageAgeWarnsRegistryOutage(t *testing.T) {
 	cfg := config{MCPServers: []mcpServerConfig{{
 		Name: "outage", Enabled: true, Command: mcpTestUVXCommand, Args: []string{"outage-pkg@latest"},
 	}}}
 	got := checkExternalPackageAgeWithResolver(t.TempDir(), cfg, false, time.Now(), func(ref packageReference) (packageRelease, error) {
 		return packageRelease{}, errors.New("timeout")
 	})
-	if got.status != checkStatusFail || !strings.Contains(got.detail, "registry lookup failed") {
-		t.Fatalf("got %#v, want outage failure", got)
+	if got.status != checkStatusWarn || !strings.Contains(got.detail, "registry lookup failed") {
+		t.Fatalf("got %#v, want outage warning", got)
 	}
 }
 

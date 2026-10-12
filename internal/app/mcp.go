@@ -30,6 +30,7 @@ type mcpTarget struct {
 	inspect    func(mcpTarget, mcpServerConfig, string) (string, error)
 	patch      func(mcpTarget, mcpServerConfig, string) error
 	read       func(mcpTarget, string, string) (mcpServerConfig, error)
+	remove     func(mcpTarget, string, string) error
 	rootKey    string
 	// parentKey, when set, names the top-level object that holds rootKey
 	// (OpenClaw keeps servers under "mcp" -> "servers").
@@ -79,15 +80,56 @@ func augmentMCPReport(report *agentReport, agent agentConfig, cfg config, home s
 			return fmt.Errorf("unsupported MCP inspect state %q for %s/%s", state, agent.Name, server.Name)
 		}
 	}
+	if !hasMCPSupport(agent.Name) {
+		return nil
+	}
+	stale, err := staleMCPServers(agent.Name, servers, readMCPOwnership(home), home)
+	if err != nil {
+		return err
+	}
+	report.StaleMCP = stale
+	report.RemovesMCP = append([]string{}, stale...)
 	return nil
 }
 
 func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
+	owned := readMCPOwnership(home)
+	backupDir := ""
 	for _, report := range reports {
-		if !report.Detected {
+		if !report.Detected || !hasMCPSupport(report.Name) {
 			continue
 		}
 		servers := desiredMCPServersForAgent(cfg, report.Name)
+		if len(report.RemovesMCP) > 0 {
+			target, err := mcpTargetForHarness(report.Name)
+			if err != nil {
+				return err
+			}
+			if backupDir == "" {
+				backupDir = newConflictBackupDir(home)
+			}
+			if err := backupNativeConfig(target.configPath(home), backupDir, home); err != nil {
+				return fmt.Errorf("%s: back up %s: %w", report.Name, target.configPath(home), err)
+			}
+			for _, name := range report.RemovesMCP {
+				if err := removeMCPServer(report.Name, name, home); err != nil {
+					return err
+				}
+			}
+		}
+		// Record what this agent now gets from tackroom, so a later removal
+		// from tackroom.yaml can be cleaned up here.
+		names := make([]string, 0, len(servers))
+		for _, server := range servers {
+			names = append(names, server.Name)
+		}
+		for _, name := range report.StaleMCP {
+			if !stringInSlice(name, report.RemovesMCP) {
+				names = append(names, name) // declined this run; still ours
+			}
+		}
+		sort.Strings(names)
+		owned[normalizeAgentName(report.Name)] = names
 		if len(servers) == 0 {
 			continue
 		}
@@ -105,7 +147,7 @@ func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
 			}
 		}
 	}
-	return nil
+	return writeMCPOwnership(home, owned)
 }
 
 func inspectMCPServer(agentName string, server mcpServerConfig, home string) (string, error) {
@@ -1328,7 +1370,7 @@ func upsertYAMLMCPNode(doc *yaml.Node, rootKey string, server mcpServerConfig, d
 	setMappingStringSlice(entryNode, "args", server.Args)
 	if len(server.Env) > 0 {
 		envNode := ensureMappingValue(entryNode, "env")
-		setMappingStringMap(envNode, server.Env)
+		setMappingStringMap(envNode, mergeManagedEnv(yamlStringMap(envNode), server.Env))
 	}
 	for key, value := range defaults {
 		setMappingScalar(entryNode, key, value)
@@ -1393,6 +1435,20 @@ func setMappingStringSlice(mapping *yaml.Node, key string, values []string) {
 		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 	}
 	setMappingNode(mapping, key, seq)
+}
+
+// yamlStringMap returns the string values of a YAML mapping node.
+func yamlStringMap(mapping *yaml.Node) map[string]string {
+	values := map[string]string{}
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return values
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i+1].Kind == yaml.ScalarNode {
+			values[mapping.Content[i].Value] = mapping.Content[i+1].Value
+		}
+	}
+	return values
 }
 
 func setMappingStringMap(mapping *yaml.Node, values map[string]string) {

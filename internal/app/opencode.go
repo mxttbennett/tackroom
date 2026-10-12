@@ -94,11 +94,14 @@ func openCodeMCPEntryMatches(entry map[string]interface{}, server mcpServerConfi
 		if !ok {
 			return false
 		}
-		for key, expected := range server.Env {
-			actual, ok := envMap[key].(string)
-			if !ok || actual != expected {
-				return false
+		native := make(map[string]string, len(envMap))
+		for key, value := range envMap {
+			if s, ok := value.(string); ok {
+				native[key] = s
 			}
+		}
+		if !envSatisfied(server.Env, native) {
+			return false
 		}
 	}
 	return true
@@ -136,6 +139,10 @@ func patchOpenCodeMCPServer(target mcpTarget, server mcpServerConfig, home strin
 			envMap = map[string]interface{}{}
 		}
 		for key, value := range server.Env {
+			// A ${KEY} reference never replaces a value the agent already has.
+			if existing, ok := envMap[key].(string); ok && strings.TrimSpace(existing) != "" && isEnvReference(value) {
+				continue
+			}
 			envMap[key] = value
 		}
 		entry["environment"] = envMap

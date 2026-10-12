@@ -369,6 +369,7 @@ func buildViewInventory(doc *configDocument) (viewInventory, error) {
 		return viewInventory{}, err
 	}
 	cfg := snapshot.cfg
+	injectPluginMCPServers(&cfg, snapshot.home)
 	expected, err := expectedSkills(snapshot.repoRoot, snapshot.home, cfg)
 	if err != nil {
 		return viewInventory{}, err

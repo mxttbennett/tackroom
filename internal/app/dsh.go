@@ -213,10 +213,8 @@ func inspectDSHMCPServer(_ mcpTarget, server mcpServerConfig, home string) (stri
 		cfg.Command != server.Command || !stringSlicesEqual(cfg.Args, server.Args) {
 		return stateDrifted, nil
 	}
-	for key, expected := range server.Env {
-		if cfg.Env[key] != expected {
-			return stateDrifted, nil
-		}
+	if !envSatisfied(server.Env, cfg.Env) {
+		return stateDrifted, nil
 	}
 	return stateSynced, nil
 }
@@ -242,7 +240,8 @@ func patchDSHMCPServer(_ mcpTarget, server mcpServerConfig, home string) error {
 		setMappingString(cfg, "command", server.Command)
 		setMappingStringSlice(cfg, "args", server.Args)
 		if len(server.Env) > 0 {
-			setMappingStringMap(ensureMappingValue(cfg, "env"), server.Env)
+			env := ensureMappingValue(cfg, "env")
+			setMappingStringMap(env, mergeManagedEnv(yamlStringMap(env), server.Env))
 		}
 		return writeDSHPatch(path, doc)
 	}

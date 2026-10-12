@@ -488,6 +488,7 @@ func buildConfigSyncPlan(doc *configDocument) (syncPlan, config, string, error) 
 	if err != nil {
 		return syncPlan{}, config{}, "", err
 	}
+	injectPluginMCPServers(&cfg, snapshot.home)
 	reports, err := inspectAgents(selected, expected, snapshot.repoRoot, snapshot.home, cfg)
 	if err != nil {
 		return syncPlan{}, config{}, "", err

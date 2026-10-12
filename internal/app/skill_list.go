@@ -185,6 +185,7 @@ func runSkillList(args []string) error {
 	if err != nil {
 		return err
 	}
+	injectPluginMCPServers(&cfg, home)
 	reports, err := inspectAgents(selected, expected, repoRoot, home, cfg)
 	if err != nil {
 		return err
@@ -287,6 +288,7 @@ func runSkillInfo(args []string) error {
 	listingBytes := skillListingBytes(single)
 	fmt.Printf("SKILL.md listing: %d bytes name+desc, %s\n", listingBytes, formatTokenEstimate(estimateTokens(listingBytes)))
 
+	injectPluginMCPServers(&cfg, home)
 	reports, err := inspectAgents(selected, single, repoRoot, home, cfg)
 	if err != nil {
 		return err

@@ -11,13 +11,18 @@ import (
 	"time"
 )
 
-// conflictBackupRoot is where replaced native files are moved:
-// $XDG_STATE_HOME/tackroom/backups, else ~/.local/state/tackroom/backups.
-func conflictBackupRoot(home string) string {
+// tackroomStateDir holds machine-local state: $XDG_STATE_HOME/tackroom, else
+// ~/.local/state/tackroom.
+func tackroomStateDir(home string) string {
 	if state := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); state != "" {
-		return filepath.Join(state, "tackroom", "backups")
+		return filepath.Join(state, "tackroom")
 	}
-	return filepath.Join(home, ".local", "state", "tackroom", "backups")
+	return filepath.Join(home, ".local", "state", "tackroom")
+}
+
+// conflictBackupRoot is where replaced native files are moved.
+func conflictBackupRoot(home string) string {
+	return filepath.Join(tackroomStateDir(home), "backups")
 }
 
 // newConflictBackupDir returns a fresh, timestamped backup directory path.

@@ -114,6 +114,7 @@ type agentReport struct {
 	MissingPlugin   []string
 	DisabledPlugin  []string
 	StalePlugin     []string
+	StaleMCP        []string // servers sync wrote earlier that are no longer wanted
 	UnsupportedHook []string
 	Conflicts       []string
 	// Replaceable lists conflicts that `sync --replace-conflicts` (and setup)
@@ -133,6 +134,7 @@ type agentReport struct {
 	UpdatesPackage []string
 	Removes        []string
 	RemovesAgent   []string
+	RemovesMCP     []string
 	RemovesPackage []string
 	RemovesPlugin  []string
 	Synced         bool

@@ -1,0 +1,163 @@
+package app
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestRemoveMCPServerLeavesOtherServersInEveryFormat(t *testing.T) {
+	for _, agent := range []string{agentClaudeCode, agentCodex, agentOpenCode, agentHermes, agentDSH, agentOpenClaw} {
+		t.Run(agent, func(t *testing.T) {
+			home := t.TempDir()
+			keep := mcpServerConfig{Name: "keep", Command: "keep-mcp", Args: []string{"-x"}}
+			gone := mcpServerConfig{Name: "gone", Command: "gone-mcp", Env: map[string]string{"TOKEN": "${TOKEN}"}}
+			for _, server := range []mcpServerConfig{keep, gone} {
+				if err := patchMCPServer(agent, server, home); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := removeMCPServer(agent, "gone", home); err != nil {
+				t.Fatal(err)
+			}
+			if state, err := inspectMCPServer(agent, mcpServerConfig{Name: "gone"}, home); err != nil || state != stateMissing {
+				t.Fatalf("gone = %s, %v; want missing", state, err)
+			}
+			if state, err := inspectMCPServer(agent, keep, home); err != nil || state != stateSynced {
+				t.Fatalf("keep = %s, %v; want synced", state, err)
+			}
+			// Removing an absent server is a no-op.
+			if err := removeMCPServer(agent, "gone", home); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRemoveCodexMCPServerLeavesABrokenFileAlone(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	broken := "[mcp_servers.gone]\ncommand = \"x\"\n\n[mcp_servers.broken\ncommand = = \"y\"\n"
+	writeSyncTestFile(t, configPath, []byte(broken))
+	if err := removeMCPServer(agentCodex, "gone", home); err == nil {
+		t.Fatal("removing from an unparseable config should fail")
+	}
+	if data, _ := os.ReadFile(configPath); string(data) != broken {
+		t.Fatalf("broken config was modified:\n%s", data)
+	}
+}
+
+func writeMCPLifecycleConfig(t *testing.T, repoRoot string, servers string) {
+	t.Helper()
+	writeSyncTestFile(t, filepath.Join(repoRoot, "tackroom.yaml"), []byte(`version: 1
+agents:
+  - name: claude
+    enabled: true
+    skill_root: ~/.claude/skills
+    detect: claude
+  - name: codex
+    enabled: true
+    skill_root: ~/.codex/skills
+    detect: codex
+mcp_servers:
+`+servers))
+}
+
+func TestSyncRemovesMCPServersDroppedFromTackroomYAML(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	fakePath(t, "claude", "codex")
+	repoRoot := filepath.Join(home, ".agents")
+	configPath := filepath.Join(repoRoot, "tackroom.yaml")
+	writeSyncTestFile(t, filepath.Join(repoRoot, "skills", "sample", "SKILL.md"), []byte("---\nname: sample\ndescription: s\n---\n"))
+	// A server the user configured by hand must survive.
+	writeSyncTestFile(t, filepath.Join(home, ".codex", "config.toml"), []byte("[mcp_servers.mine]\ncommand = \"mine-mcp\"\nargs = []\n"))
+	writeMCPLifecycleConfig(t, repoRoot, `  - name: keep
+    enabled: true
+    command: keep-mcp
+  - name: gone
+    enabled: true
+    command: gone-mcp
+`)
+	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	for _, path := range []string{".claude.json", ".codex/config.toml"} {
+		if data, _ := os.ReadFile(filepath.Join(home, path)); !strings.Contains(string(data), "gone-mcp") {
+			t.Fatalf("%s should have the gone server after the first sync:\n%s", path, data)
+		}
+	}
+
+	writeMCPLifecycleConfig(t, repoRoot, `  - name: keep
+    enabled: true
+    command: keep-mcp
+`)
+	var status bytes.Buffer
+	if err := runStatus(runOptions{ConfigPath: configPath, Stdout: &status}); err == nil || !strings.Contains(status.String(), "gone") {
+		t.Fatalf("status should report the stale server, err=%v\n%s", err, status.String())
+	}
+
+	var out bytes.Buffer
+	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &out}); err != nil {
+		t.Fatalf("second sync: %v\n%s", err, out.String())
+	}
+	for _, path := range []string{".claude.json", ".codex/config.toml"} {
+		data, _ := os.ReadFile(filepath.Join(home, path))
+		if strings.Contains(string(data), "gone-mcp") || !strings.Contains(string(data), "keep-mcp") {
+			t.Fatalf("%s should drop only the removed server:\n%s", path, data)
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); !strings.Contains(string(data), "mine-mcp") {
+		t.Fatalf("a hand-configured server was removed:\n%s", data)
+	}
+	backups, _ := filepath.Glob(filepath.Join(home, ".local", "state", "tackroom", "backups", "*", ".codex", "config.toml"))
+	if len(backups) != 1 {
+		t.Fatalf("codex config should be backed up before removal, found %v", backups)
+	}
+	if data, _ := os.ReadFile(backups[0]); !strings.Contains(string(data), "gone-mcp") {
+		t.Fatalf("backup should hold the pre-removal config:\n%s", data)
+	}
+	if err := runStatus(runOptions{ConfigPath: configPath, Stdout: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("status after cleanup: %v", err)
+	}
+}
+
+func TestSyncKeepsReferencedSecretsInEveryFormat(t *testing.T) {
+	for _, agent := range []string{agentOpenCode, agentHermes, agentDSH} {
+		t.Run(agent, func(t *testing.T) {
+			home := t.TempDir()
+			real := mcpServerConfig{Name: "linear", Command: "linear-mcp", Env: map[string]string{"API_KEY": "real-secret"}}
+			if err := patchMCPServer(agent, real, home); err != nil {
+				t.Fatal(err)
+			}
+			canonical := mcpServerConfig{Name: "linear", Command: "linear-mcp", Env: map[string]string{"API_KEY": "${API_KEY}"}}
+			if state, err := inspectMCPServer(agent, canonical, home); err != nil || state != stateSynced {
+				t.Fatalf("a real value satisfies a reference: %s, %v", state, err)
+			}
+			if err := patchMCPServer(agent, canonical, home); err != nil {
+				t.Fatal(err)
+			}
+			target, _ := mcpTargetForHarness(agent)
+			if data, _ := os.ReadFile(target.configPath(home)); !strings.Contains(string(data), "real-secret") {
+				t.Fatalf("the secret was replaced with a reference:\n%s", data)
+			}
+		})
+	}
+}
+
+func TestDoctorHermesHooksPassesWithoutHermesHooks(t *testing.T) {
+	home := t.TempDir()
+	fakePath(t, "hermes")
+	writeSyncTestFile(t, filepath.Join(home, ".hermes", "config.yaml"), []byte("model: x\n"))
+	cfg := config{Agents: []agentConfig{{Name: agentHermes, Enabled: true}}}
+	if got := checkHermesHooks(home, cfg); got.status != checkStatusPass {
+		t.Fatalf("got %#v, want pass when no hooks target hermes", got)
+	}
+	cfg.Hooks = []hookConfig{{Name: "h", Enabled: true}}
+	if got := checkHermesHooks(home, cfg); got.status != checkStatusWarn {
+		t.Fatalf("got %#v, want warn when a hook targets hermes but none is configured", got)
+	}
+}
