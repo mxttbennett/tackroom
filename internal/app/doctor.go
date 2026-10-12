@@ -547,11 +547,12 @@ func checkHermesHooks(home string, cfg config) checkResult {
 		return checkResult{"hermes hooks", checkStatusWarn, "config.yaml parse error"}
 	}
 
+	// Without a tackroom hook targeting Hermes, no native hooks is fine.
+	if hooks, _ := desiredHooksForAgent(cfg, agentHermes); len(hooks) == 0 {
+		return checkResult{"hermes hooks", checkStatusPass, "no tackroom hooks target hermes"}
+	}
 	hooksRaw, ok := raw["hooks"]
 	if !ok {
-		if hooks, _ := desiredHooksForAgent(cfg, agentHermes); len(hooks) == 0 {
-			return checkResult{"hermes hooks", checkStatusPass, "no hooks configured for hermes"}
-		}
 		return checkResult{"hermes hooks", checkStatusWarn, "no hooks section configured"}
 	}
 

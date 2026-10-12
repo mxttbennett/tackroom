@@ -244,7 +244,8 @@ func runMCPRemove(args []string) error {
 		return err
 	}
 	removed := false
-	servers := cfg.MCPServers[:0]
+	// A fresh slice: cfg.MCPServers is still read by the claim below.
+	servers := make([]mcpServerConfig, 0, len(cfg.MCPServers))
 	for _, server := range cfg.MCPServers {
 		if server.Name == name {
 			removed = true
@@ -255,12 +256,22 @@ func runMCPRemove(args []string) error {
 	if !removed {
 		return fmt.Errorf("MCP server %q not found", name)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	// Claim the native copies that still match this definition (for example
+	// written by a release that did not track ownership), so the next sync
+	// removes them too.
+	if err := claimMatchingMCPServer(cfg, name, home); err != nil {
+		return err
+	}
 	cfg.MCPServers = servers
 	if err := writeEditableMCPConfig(path, cfg); err != nil {
 		return err
 	}
 	fmt.Printf("removed MCP server %s from %s\n", name, path)
-	fmt.Println("next: tackroom sync (removes it from the agents tackroom wrote it to; their configs are backed up first)")
+	fmt.Println("next: tackroom sync (removes it from agents where tackroom wrote it or it still matches; their configs are backed up first)")
 	return nil
 }
 

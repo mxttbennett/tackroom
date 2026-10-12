@@ -23,20 +23,26 @@ func mcpOwnershipPath(home string) string {
 	return filepath.Join(tackroomStateDir(home), "mcp-servers.json")
 }
 
-// readMCPOwnership returns the record, or an empty one when it is missing or
-// unreadable: losing it only means stale servers are not cleaned up.
-func readMCPOwnership(home string) mcpOwnership {
-	data, err := os.ReadFile(mcpOwnershipPath(home))
+// readMCPOwnership returns the record; a missing file is an empty record. An
+// unreadable one is an error: treating it as empty would forget servers that
+// still need cleanup.
+func readMCPOwnership(home string) (mcpOwnership, error) {
+	path := mcpOwnershipPath(home)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return mcpOwnership{}, nil
+	}
 	if err != nil {
-		return mcpOwnership{}
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	var owned mcpOwnership
-	if err := json.Unmarshal(data, &owned); err != nil || owned == nil {
-		return mcpOwnership{}
+	owned := mcpOwnership{}
+	if err := json.Unmarshal(data, &owned); err != nil {
+		return nil, fmt.Errorf("parse %s: %w (fix it, or delete it to stop tracking MCP servers tackroom wrote)", path, err)
 	}
-	return owned
+	return owned, nil
 }
 
+// writeMCPOwnership replaces the record atomically.
 func writeMCPOwnership(home string, owned mcpOwnership) error {
 	path := mcpOwnershipPath(home)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -46,7 +52,21 @@ func writeMCPOwnership(home string, owned mcpOwnership) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mcp-servers-*.json")
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		os.Remove(tmp.Name())
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
@@ -77,6 +97,37 @@ func staleMCPServers(agentName string, desired []mcpServerConfig, owned mcpOwner
 	return stale, nil
 }
 
+// claimMatchingMCPServer records name as tackroom-owned for every targeted
+// agent whose native entry still matches the canonical definition. Agents
+// whose config cannot be read are skipped.
+func claimMatchingMCPServer(cfg config, name string, home string) error {
+	owned, err := readMCPOwnership(home)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, agent := range cfg.Agents {
+		if !agent.Enabled || !hasMCPSupport(agent.Name) {
+			continue
+		}
+		key := normalizeAgentName(agent.Name)
+		for _, server := range desiredMCPServersForAgent(cfg, agent.Name) {
+			if server.Name != name || stringInSlice(name, owned[key]) {
+				continue
+			}
+			if state, err := inspectMCPServer(agent.Name, server, home); err == nil && state == stateSynced {
+				owned[key] = append(owned[key], name)
+				sort.Strings(owned[key])
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeMCPOwnership(home, owned)
+}
+
 func removeMCPServer(agentName string, name string, home string) error {
 	target, err := mcpTargetForHarness(agentName)
 	if err != nil {
@@ -85,8 +136,9 @@ func removeMCPServer(agentName string, name string, home string) error {
 	return target.remove(target, name, home)
 }
 
-// backupNativeConfig copies a native config file into backupDir once per
-// sync run, before tackroom removes entries from it.
+// backupNativeConfig copies a native config file into backupDir before
+// tackroom removes entries from it. An identical copy already there is
+// reused; a differing one gets a numbered sibling.
 func backupNativeConfig(path string, backupDir string, home string) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -96,8 +148,14 @@ func backupNativeConfig(path string, backupDir string, home string) error {
 		return err
 	}
 	dest := backupPathFor(path, backupDir, home)
-	if _, err := os.Lstat(dest); err == nil {
-		return nil
+	for n := 1; ; n++ {
+		if _, err := os.Lstat(dest); err != nil {
+			break
+		}
+		if same, err := filesEqual(path, dest); err == nil && same {
+			return nil // this exact content is already backed up
+		}
+		dest = fmt.Sprintf("%s.%d", backupPathFor(path, backupDir, home), n)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return err

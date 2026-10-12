@@ -507,6 +507,9 @@ func buildConfigSyncPlan(doc *configDocument) (syncPlan, config, string, error) 
 		for _, item := range report.RemovesPlugin {
 			plan.Destructive = append(plan.Destructive, report.Name+": remove plugin "+item)
 		}
+		for _, item := range report.RemovesMCP {
+			plan.Destructive = append(plan.Destructive, report.Name+": remove MCP server "+item)
+		}
 	}
 	planData, _ := json.Marshal(struct {
 		Repo    repoLinkReport

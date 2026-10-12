@@ -83,7 +83,11 @@ func augmentMCPReport(report *agentReport, agent agentConfig, cfg config, home s
 	if !hasMCPSupport(agent.Name) {
 		return nil
 	}
-	stale, err := staleMCPServers(agent.Name, servers, readMCPOwnership(home), home)
+	owned, err := readMCPOwnership(home)
+	if err != nil {
+		return err
+	}
+	stale, err := staleMCPServers(agent.Name, servers, owned, home)
 	if err != nil {
 		return err
 	}
@@ -93,13 +97,43 @@ func augmentMCPReport(report *agentReport, agent agentConfig, cfg config, home s
 }
 
 func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
-	owned := readMCPOwnership(home)
+	owned, err := readMCPOwnership(home)
+	if err != nil {
+		return err
+	}
+	applyErr := applyAgentMCPChanges(reports, cfg, home, owned)
+	// Persist ownership even after a failure, so servers already written stay
+	// tracked.
+	if err := writeMCPOwnership(home, owned); err != nil && applyErr == nil {
+		applyErr = err
+	}
+	return applyErr
+}
+
+// applyAgentMCPChanges removes stale servers and writes missing or drifted
+// ones, updating owned as each change lands. An agent owns a server only once
+// tackroom has written it; a matching entry the user already had is not
+// claimed.
+func applyAgentMCPChanges(reports []agentReport, cfg config, home string, owned mcpOwnership) error {
 	backupDir := ""
 	for _, report := range reports {
 		if !report.Detected || !hasMCPSupport(report.Name) {
 			continue
 		}
+		key := normalizeAgentName(report.Name)
 		servers := desiredMCPServersForAgent(cfg, report.Name)
+		byName := make(map[string]mcpServerConfig, len(servers))
+		for _, server := range servers {
+			byName[server.Name] = server
+		}
+		// Keep servers still wanted, and stale ones whose removal was declined.
+		var kept []string
+		for _, name := range owned[key] {
+			if _, ok := byName[name]; ok || (stringInSlice(name, report.StaleMCP) && !stringInSlice(name, report.RemovesMCP)) {
+				kept = append(kept, name)
+			}
+		}
+		owned[key] = kept
 		if len(report.RemovesMCP) > 0 {
 			target, err := mcpTargetForHarness(report.Name)
 			if err != nil {
@@ -111,31 +145,14 @@ func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
 			if err := backupNativeConfig(target.configPath(home), backupDir, home); err != nil {
 				return fmt.Errorf("%s: back up %s: %w", report.Name, target.configPath(home), err)
 			}
-			for _, name := range report.RemovesMCP {
+			for i, name := range report.RemovesMCP {
 				if err := removeMCPServer(report.Name, name, home); err != nil {
+					// Still ours: keep the ones not yet removed for the next run.
+					owned[key] = append(owned[key], report.RemovesMCP[i:]...)
+					sort.Strings(owned[key])
 					return err
 				}
 			}
-		}
-		// Record what this agent now gets from tackroom, so a later removal
-		// from tackroom.yaml can be cleaned up here.
-		names := make([]string, 0, len(servers))
-		for _, server := range servers {
-			names = append(names, server.Name)
-		}
-		for _, name := range report.StaleMCP {
-			if !stringInSlice(name, report.RemovesMCP) {
-				names = append(names, name) // declined this run; still ours
-			}
-		}
-		sort.Strings(names)
-		owned[normalizeAgentName(report.Name)] = names
-		if len(servers) == 0 {
-			continue
-		}
-		byName := make(map[string]mcpServerConfig, len(servers))
-		for _, server := range servers {
-			byName[server.Name] = server
 		}
 		for _, name := range append(report.AddsMCP, report.UpdatesMCP...) {
 			server, ok := byName[name]
@@ -145,9 +162,13 @@ func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
 			if err := patchMCPServer(report.Name, server, home); err != nil {
 				return err
 			}
+			if !stringInSlice(name, owned[key]) {
+				owned[key] = append(owned[key], name)
+				sort.Strings(owned[key])
+			}
 		}
 	}
-	return writeMCPOwnership(home, owned)
+	return nil
 }
 
 func inspectMCPServer(agentName string, server mcpServerConfig, home string) (string, error) {

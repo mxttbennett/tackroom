@@ -104,10 +104,12 @@ func TestSyncRemovesMCPServersDroppedFromTackroomYAML(t *testing.T) {
 	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &out}); err != nil {
 		t.Fatalf("second sync: %v\n%s", err, out.String())
 	}
-	for _, path := range []string{".claude.json", ".codex/config.toml"} {
-		data, _ := os.ReadFile(filepath.Join(home, path))
-		if strings.Contains(string(data), "gone-mcp") || !strings.Contains(string(data), "keep-mcp") {
-			t.Fatalf("%s should drop only the removed server:\n%s", path, data)
+	for _, agent := range []string{agentClaudeCode, agentCodex} {
+		if state, err := inspectMCPServer(agent, mcpServerConfig{Name: "gone"}, home); err != nil || state != stateMissing {
+			t.Fatalf("%s still has the removed server: %s, %v", agent, state, err)
+		}
+		if state, err := inspectMCPServer(agent, mcpServerConfig{Name: "keep", Command: "keep-mcp"}, home); err != nil || state != stateSynced {
+			t.Fatalf("%s lost the kept server: %s, %v", agent, state, err)
 		}
 	}
 	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); !strings.Contains(string(data), "mine-mcp") {
@@ -156,8 +158,90 @@ func TestDoctorHermesHooksPassesWithoutHermesHooks(t *testing.T) {
 	if got := checkHermesHooks(home, cfg); got.status != checkStatusPass {
 		t.Fatalf("got %#v, want pass when no hooks target hermes", got)
 	}
+	writeSyncTestFile(t, filepath.Join(home, ".hermes", "config.yaml"), []byte("model: x\nhooks: {}\n"))
+	if got := checkHermesHooks(home, cfg); got.status != checkStatusPass {
+		t.Fatalf("got %#v, want pass for an empty hooks section with no hermes hooks", got)
+	}
 	cfg.Hooks = []hookConfig{{Name: "h", Enabled: true}}
 	if got := checkHermesHooks(home, cfg); got.status != checkStatusWarn {
 		t.Fatalf("got %#v, want warn when a hook targets hermes but none is configured", got)
+	}
+}
+
+func TestSyncNeverClaimsAServerTheUserAlreadyHad(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	fakePath(t, "claude", "codex")
+	repoRoot := filepath.Join(home, ".agents")
+	configPath := filepath.Join(repoRoot, "tackroom.yaml")
+	writeSyncTestFile(t, filepath.Join(repoRoot, "skills", "sample", "SKILL.md"), []byte("---\nname: sample\ndescription: s\n---\n"))
+	// Codex already has the exact entry tackroom.yaml asks for.
+	writeSyncTestFile(t, filepath.Join(home, ".codex", "config.toml"), []byte("[mcp_servers.mine]\ncommand = \"mine-mcp\"\nargs = []\n"))
+	writeMCPLifecycleConfig(t, repoRoot, `  - name: mine
+    enabled: true
+    command: mine-mcp
+    agents: [codex]
+`)
+	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("first sync: %v", err)
+	}
+	writeMCPLifecycleConfig(t, repoRoot, "  []\n")
+	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("second sync: %v", err)
+	}
+	if state, err := inspectMCPServer(agentCodex, mcpServerConfig{Name: "mine", Command: "mine-mcp"}, home); err != nil || state != stateSynced {
+		t.Fatalf("a server tackroom never wrote was removed: %s, %v", state, err)
+	}
+}
+
+func TestMCPRemoveCleansUpUntrackedMatchingCopies(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	fakePath(t, "claude", "codex")
+	repoRoot := filepath.Join(home, ".agents")
+	configPath := filepath.Join(repoRoot, "tackroom.yaml")
+	writeSyncTestFile(t, filepath.Join(repoRoot, "skills", "sample", "SKILL.md"), []byte("---\nname: sample\ndescription: s\n---\n"))
+	// A server listed after the removed one must not hide it from the claim.
+	writeMCPLifecycleConfig(t, repoRoot, `  - name: old
+    enabled: true
+    command: old-mcp
+  - name: other
+    enabled: true
+    command: other-mcp
+`)
+	// As written by a release that did not record ownership.
+	for _, agent := range []string{agentClaudeCode, agentCodex} {
+		if err := patchMCPServer(agent, mcpServerConfig{Name: "old", Command: "old-mcp"}, home); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runMCPRemove([]string{"old", "--config", configPath}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSync(runOptions{ConfigPath: configPath, Stdout: &bytes.Buffer{}}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	for _, agent := range []string{agentClaudeCode, agentCodex} {
+		if state, err := inspectMCPServer(agent, mcpServerConfig{Name: "old"}, home); err != nil || state != stateMissing {
+			t.Fatalf("%s still has the removed server: %s, %v", agent, state, err)
+		}
+	}
+}
+
+func TestUnreadableMCPOwnershipIsAnError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", "")
+	writeSyncTestFile(t, mcpOwnershipPath(home), []byte("{not json"))
+	if _, err := readMCPOwnership(home); err == nil || !strings.Contains(err.Error(), "delete it") {
+		t.Fatalf("want a parse error with a fix, got %v", err)
+	}
+	if err := writeMCPOwnership(home, mcpOwnership{"codex": {"a"}}); err != nil {
+		t.Fatal(err)
+	}
+	owned, err := readMCPOwnership(home)
+	if err != nil || len(owned["codex"]) != 1 {
+		t.Fatalf("round trip: %v %v", owned, err)
 	}
 }

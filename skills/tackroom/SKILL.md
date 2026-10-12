@@ -125,7 +125,7 @@ Agent roles are canonical Markdown files under `~/.agents/agents/` and render to
 
 Pi always has managed skills. With `pi-subagents` installed, tackroom renders canonical roles into Pi's user agent directory. With `pi-mcp-adapter` installed, it patches canonical and Agent Plugin MCP entries into `~/.pi/agent/mcp.json`. Put pinned package sources under the Pi target's `packages` list to make `sync` reconcile `~/.pi/agent/settings.json`; Pi installs missing declared packages at startup. Tackroom does not install the Pi executable. The role and MCP files remain inert when their packages are absent. OMP is a separate target.
 
-For MCP servers, sync patches only named canonical entries and preserves unrelated native servers. A server sync wrote earlier and that is no longer wanted for an agent (removed from `tackroom.yaml`, disabled, or dropped from its `agents`) shows as `mcp stale` in `status` and is removed by the next `sync`, after the native config file is copied to `~/.local/state/tackroom/backups/<time>/`. Servers tackroom never wrote are never removed. Import redacts literal environment values to `${KEY}` references and names the redacted keys; the source agent keeps its values. Other target agents get the literal `${KEY}`, which they may not expand: put the real value in their native config (sync never replaces a value with a reference) or import with `--agents <source>`. List output never prints values.
+For MCP servers, sync patches only named canonical entries and preserves unrelated native servers. A server sync wrote earlier and that is no longer wanted for an agent (removed from `tackroom.yaml`, disabled, or dropped from its `agents`) shows as `mcp stale` in `status` and is removed by the next `sync`, after the native config file is copied to `~/.local/state/tackroom/backups/<time>/`. Sync never claims an entry the agent already had; `mcp remove` also claims native entries that still match the definition it removes. Import redacts literal environment values to `${KEY}` references and names the redacted keys; the source agent keeps its values. Other target agents get the literal `${KEY}`, which they may not expand: put the real value in their native config (sync never replaces a value with a reference) or import with `--agents <source>`. List output never prints values.
 
 For hooks, sync registers only declared entries on harnesses with verified hook support. Host-local review and approval state remains outside tackroom; Hermes keys first-use consent by the exact event and command and reports script mtime drift through `hermes hooks doctor`.
 
@@ -170,7 +170,7 @@ tackroom mcp add local --command uvx --arg pkg@1.2.3 --env KEY=value
 tackroom mcp import claude local --agents=codex,hermes,droid,pi,omp
 tackroom sync
 tackroom mcp remove local
-tackroom sync                     # removes it from the agents tackroom wrote it to
+tackroom sync                     # removes it from agents where tackroom wrote it or it still matches
 ```
 
 Use versions verified against the package registry. Keep secrets in environment variables or host-local native config, never canonical YAML.
