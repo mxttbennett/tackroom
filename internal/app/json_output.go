@@ -13,6 +13,8 @@ type surfaceJSON struct {
 	Managed []string `json:"managed"`
 	Missing []string `json:"missing"`
 	Drifted []string `json:"drifted"`
+	// Stale lists servers sync wrote earlier that are no longer wanted (MCP only).
+	Stale []string `json:"stale,omitempty"`
 }
 
 type rootInstructionsJSON struct {
@@ -61,7 +63,7 @@ func buildStatusJSON(repoRoot string, repoReport repoLinkReport, reports []agent
 			Synced:    r.Synced,
 			Error:     r.Error,
 			Skills:    surface(r.Managed, r.Missing, r.Drifted),
-			MCP:       surface(r.ManagedMCP, r.MissingMCP, r.DriftedMCP),
+			MCP:       surfaceJSON{Managed: nonNil(r.ManagedMCP), Missing: nonNil(r.MissingMCP), Drifted: nonNil(r.DriftedMCP), Stale: r.StaleMCP},
 			Roles:     surface(r.ManagedAgent, r.MissingAgent, r.DriftedAgent),
 			Hooks:     surface(r.ManagedHook, r.MissingHook, r.DriftedHook),
 			Conflicts: nonNil(r.Conflicts),

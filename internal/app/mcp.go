@@ -30,6 +30,7 @@ type mcpTarget struct {
 	inspect    func(mcpTarget, mcpServerConfig, string) (string, error)
 	patch      func(mcpTarget, mcpServerConfig, string) error
 	read       func(mcpTarget, string, string) (mcpServerConfig, error)
+	remove     func(mcpTarget, string, string) error
 	rootKey    string
 	// parentKey, when set, names the top-level object that holds rootKey
 	// (OpenClaw keeps servers under "mcp" -> "servers").
@@ -79,21 +80,79 @@ func augmentMCPReport(report *agentReport, agent agentConfig, cfg config, home s
 			return fmt.Errorf("unsupported MCP inspect state %q for %s/%s", state, agent.Name, server.Name)
 		}
 	}
+	if !hasMCPSupport(agent.Name) {
+		return nil
+	}
+	owned, err := readMCPOwnership(home)
+	if err != nil {
+		return err
+	}
+	stale, err := staleMCPServers(agent.Name, servers, owned, home)
+	if err != nil {
+		return err
+	}
+	report.StaleMCP = stale
+	report.RemovesMCP = append([]string{}, stale...)
 	return nil
 }
 
 func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
+	owned, err := readMCPOwnership(home)
+	if err != nil {
+		return err
+	}
+	applyErr := applyAgentMCPChanges(reports, cfg, home, owned)
+	// Persist ownership even after a failure, so servers already written stay
+	// tracked.
+	if err := writeMCPOwnership(home, owned); err != nil && applyErr == nil {
+		applyErr = err
+	}
+	return applyErr
+}
+
+// applyAgentMCPChanges removes stale servers and writes missing or drifted
+// ones, updating owned as each change lands. An agent owns a server only once
+// tackroom has written it; a matching entry the user already had is not
+// claimed.
+func applyAgentMCPChanges(reports []agentReport, cfg config, home string, owned mcpOwnership) error {
+	backupDir := ""
 	for _, report := range reports {
-		if !report.Detected {
+		if !report.Detected || !hasMCPSupport(report.Name) {
 			continue
 		}
+		key := normalizeAgentName(report.Name)
 		servers := desiredMCPServersForAgent(cfg, report.Name)
-		if len(servers) == 0 {
-			continue
-		}
 		byName := make(map[string]mcpServerConfig, len(servers))
 		for _, server := range servers {
 			byName[server.Name] = server
+		}
+		// Keep servers still wanted, and stale ones whose removal was declined.
+		var kept []string
+		for _, name := range owned[key] {
+			if _, ok := byName[name]; ok || (stringInSlice(name, report.StaleMCP) && !stringInSlice(name, report.RemovesMCP)) {
+				kept = append(kept, name)
+			}
+		}
+		owned[key] = kept
+		if len(report.RemovesMCP) > 0 {
+			target, err := mcpTargetForHarness(report.Name)
+			if err != nil {
+				return err
+			}
+			if backupDir == "" {
+				backupDir = newConflictBackupDir(home)
+			}
+			if err := backupNativeConfig(target.configPath(home), backupDir, home); err != nil {
+				return fmt.Errorf("%s: back up %s: %w", report.Name, target.configPath(home), err)
+			}
+			for i, name := range report.RemovesMCP {
+				if err := removeMCPServer(report.Name, name, home); err != nil {
+					// Still ours: keep the ones not yet removed for the next run.
+					owned[key] = append(owned[key], report.RemovesMCP[i:]...)
+					sort.Strings(owned[key])
+					return err
+				}
+			}
 		}
 		for _, name := range append(report.AddsMCP, report.UpdatesMCP...) {
 			server, ok := byName[name]
@@ -102,6 +161,10 @@ func applyAgentMCPSync(reports []agentReport, cfg config, home string) error {
 			}
 			if err := patchMCPServer(report.Name, server, home); err != nil {
 				return err
+			}
+			if !stringInSlice(name, owned[key]) {
+				owned[key] = append(owned[key], name)
+				sort.Strings(owned[key])
 			}
 		}
 	}
@@ -1328,7 +1391,7 @@ func upsertYAMLMCPNode(doc *yaml.Node, rootKey string, server mcpServerConfig, d
 	setMappingStringSlice(entryNode, "args", server.Args)
 	if len(server.Env) > 0 {
 		envNode := ensureMappingValue(entryNode, "env")
-		setMappingStringMap(envNode, server.Env)
+		setMappingStringMap(envNode, mergeManagedEnv(yamlStringMap(envNode), server.Env))
 	}
 	for key, value := range defaults {
 		setMappingScalar(entryNode, key, value)
@@ -1393,6 +1456,20 @@ func setMappingStringSlice(mapping *yaml.Node, key string, values []string) {
 		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
 	}
 	setMappingNode(mapping, key, seq)
+}
+
+// yamlStringMap returns the string values of a YAML mapping node.
+func yamlStringMap(mapping *yaml.Node) map[string]string {
+	values := map[string]string{}
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return values
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i+1].Kind == yaml.ScalarNode {
+			values[mapping.Content[i].Value] = mapping.Content[i+1].Value
+		}
+	}
+	return values
 }
 
 func setMappingStringMap(mapping *yaml.Node, values map[string]string) {

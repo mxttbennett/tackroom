@@ -124,7 +124,22 @@ func runMCPAdd(args []string) error {
 	if err := upsertCanonicalMCPServer(&cfg, server); err != nil {
 		return err
 	}
-	return writeEditableMCPConfig(path, cfg)
+	if err := writeEditableMCPConfig(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("added MCP server %s for %s\n", name, strings.Join(targetAgents, ", "))
+	var literal []string
+	for key, value := range env {
+		if !isEnvReference(value) {
+			literal = append(literal, key)
+		}
+	}
+	if len(literal) > 0 {
+		sort.Strings(literal)
+		fmt.Fprintf(os.Stderr, "warning: %s stores %s in plain text; keep secrets out of a config repo you push\n", path, strings.Join(literal, ", "))
+	}
+	fmt.Println("next: tackroom sync")
+	return nil
 }
 
 func runMCPImport(args []string) error {
@@ -173,12 +188,36 @@ func runMCPImport(args []string) error {
 		return err
 	}
 	server.Enabled = true
+	var redacted []string
+	for key, value := range server.Env {
+		if !isEnvReference(value) {
+			redacted = append(redacted, key)
+		}
+	}
+	sort.Strings(redacted)
 	server.Env = redactImportedMCPEnv(server.Env)
 	server.Agents = targetAgents
 	if err := upsertCanonicalMCPServer(&cfg, server); err != nil {
 		return err
 	}
-	return writeEditableMCPConfig(path, cfg)
+	if err := writeEditableMCPConfig(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("imported MCP server %s from %s for %s\n", name, importAgent, strings.Join(targetAgents, ", "))
+	if len(redacted) > 0 {
+		var others []string
+		for _, agent := range targetAgents {
+			if agent != importAgent {
+				others = append(others, agent)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "warning: %s stores ${KEY} references for %s, not the values; %s keeps its own values\n", path, strings.Join(redacted, ", "), importAgent)
+		if len(others) > 0 {
+			fmt.Fprintf(os.Stderr, "  sync writes the literal reference into %s, which may not expand it: put the real value in their config (sync keeps it), or limit targets with --agents %s\n", strings.Join(others, ", "), importAgent)
+		}
+	}
+	fmt.Println("next: tackroom sync")
+	return nil
 }
 
 func runMCPRemove(args []string) error {
@@ -205,7 +244,8 @@ func runMCPRemove(args []string) error {
 		return err
 	}
 	removed := false
-	servers := cfg.MCPServers[:0]
+	// A fresh slice: cfg.MCPServers is still read by the claim below.
+	servers := make([]mcpServerConfig, 0, len(cfg.MCPServers))
 	for _, server := range cfg.MCPServers {
 		if server.Name == name {
 			removed = true
@@ -216,8 +256,23 @@ func runMCPRemove(args []string) error {
 	if !removed {
 		return fmt.Errorf("MCP server %q not found", name)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home: %w", err)
+	}
+	// Claim the native copies that still match this definition (for example
+	// written by a release that did not track ownership), so the next sync
+	// removes them too.
+	if err := claimMatchingMCPServer(cfg, name, home); err != nil {
+		return err
+	}
 	cfg.MCPServers = servers
-	return writeEditableMCPConfig(path, cfg)
+	if err := writeEditableMCPConfig(path, cfg); err != nil {
+		return err
+	}
+	fmt.Printf("removed MCP server %s from %s\n", name, path)
+	fmt.Println("next: tackroom sync (removes it from agents where tackroom wrote it or it still matches; their configs are backed up first)")
+	return nil
 }
 
 func loadEditableMCPConfig(overridePath string) (config, string, error) {

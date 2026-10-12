@@ -710,7 +710,7 @@ func confirmDestructiveSyncActions(reports []agentReport, streams setupIO) {
 		if !r.Detected {
 			continue
 		}
-		if len(r.Removes)+len(r.RemovesAgent)+len(r.UpdatesAgent)+len(r.RemovesPackage)+len(r.RemovesPlugin) == 0 {
+		if len(r.Removes)+len(r.RemovesAgent)+len(r.UpdatesAgent)+len(r.RemovesPackage)+len(r.RemovesPlugin)+len(r.RemovesMCP) == 0 {
 			continue
 		}
 		fmt.Fprintf(streams.out, "\n%s has existing content this sync would change:\n", r.Name)
@@ -729,6 +729,9 @@ func confirmDestructiveSyncActions(reports []agentReport, streams setupIO) {
 		if len(r.RemovesPlugin) > 0 {
 			fmt.Fprintf(streams.out, "  remove %d Claude plugin setting(s): %s\n", len(r.RemovesPlugin), strings.Join(r.RemovesPlugin, ", "))
 		}
+		if len(r.RemovesMCP) > 0 {
+			fmt.Fprintf(streams.out, "  remove %d MCP server(s) tackroom no longer manages: %s\n", len(r.RemovesMCP), strings.Join(r.RemovesMCP, ", "))
+		}
 		if !promptYesNoDefaultNo(streams, fmt.Sprintf("Apply these changes to %s?", r.Name)) {
 			fmt.Fprintf(streams.out, "%s: keeping existing content; removals and overwrites skipped this run\n", r.Name)
 			r.Removes = nil
@@ -737,6 +740,7 @@ func confirmDestructiveSyncActions(reports []agentReport, streams setupIO) {
 			r.RemovesPackage = nil
 			r.UpdatesPackage = nil
 			r.RemovesPlugin = nil
+			r.RemovesMCP = nil
 		}
 	}
 }

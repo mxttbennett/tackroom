@@ -73,11 +73,13 @@ func checkExternalPackageAgeWithResolver(repoRoot string, cfg config, skip bool,
 			fresh = append(fresh, fmt.Sprintf("%s:%s@%s from %s is %s old", ref.Ecosystem, ref.Package, release.Version, ref.Source, age.Round(time.Hour)))
 		}
 	}
+	// Advisory: a release younger than the floor or an unreachable registry
+	// (offline) is worth a look, not a broken install.
 	if len(unresolved) > 0 {
-		return checkResult{"package age", checkStatusFail, "registry lookup failed: " + strings.Join(unresolved, "; ")}
+		return checkResult{"package age", checkStatusWarn, "registry lookup failed (offline or a wrong pin?): " + strings.Join(unresolved, "; ")}
 	}
 	if len(fresh) > 0 {
-		return checkResult{"package age", checkStatusFail, fmt.Sprintf("package newer than %d days: %s", defaultPackageAgeMinimumDays, strings.Join(fresh, "; "))}
+		return checkResult{"package age", checkStatusWarn, fmt.Sprintf("package newer than %d days: %s; pin an older release or wait, or pass --skip-package-age", defaultPackageAgeMinimumDays, strings.Join(fresh, "; "))}
 	}
 	detail := fmt.Sprintf("%d references at least %d days old", len(refs)-exempt, defaultPackageAgeMinimumDays)
 	if exempt > 0 {

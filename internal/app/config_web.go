@@ -488,6 +488,7 @@ func buildConfigSyncPlan(doc *configDocument) (syncPlan, config, string, error) 
 	if err != nil {
 		return syncPlan{}, config{}, "", err
 	}
+	injectPluginMCPServers(&cfg, snapshot.home)
 	reports, err := inspectAgents(selected, expected, snapshot.repoRoot, snapshot.home, cfg)
 	if err != nil {
 		return syncPlan{}, config{}, "", err
@@ -505,6 +506,9 @@ func buildConfigSyncPlan(doc *configDocument) (syncPlan, config, string, error) 
 		}
 		for _, item := range report.RemovesPlugin {
 			plan.Destructive = append(plan.Destructive, report.Name+": remove plugin "+item)
+		}
+		for _, item := range report.RemovesMCP {
+			plan.Destructive = append(plan.Destructive, report.Name+": remove MCP server "+item)
 		}
 	}
 	planData, _ := json.Marshal(struct {
