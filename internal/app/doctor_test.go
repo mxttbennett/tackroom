@@ -121,7 +121,7 @@ func TestScopeAgnixToCanonicalIgnoresExternalClones(t *testing.T) {
 
 func TestCheckAgnixMissingBinaryWarns(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	res := checkAgnix(t.TempDir())
+	res := checkAgnix(t.TempDir(), config{})
 	if res.status != checkStatusWarn {
 		t.Fatalf("agnix missing-binary status = %q, want %q (%+v)", res.status, checkStatusWarn, res)
 	}

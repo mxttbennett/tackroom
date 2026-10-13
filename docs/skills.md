@@ -25,7 +25,7 @@ tackroom skill sources add obra/superpowers --all
 tackroom skill sources add cursor/plugins/pstack --skills how,why   # a path inside a repo
 ```
 
-`add` pins the newest commit that is at least 3 days old (`--latest` pins the branch head), so a freshly pushed commit never reaches every agent the moment it lands. Pick skills with `--skills` or `--all`; an attended run without either shows a numbered list. If `~/.agents/skills/<name>` already exists, `add` adopts it only when it is identical to the source (as `npx skills add` leaves it) and stops otherwise. Then it syncs (`--no-sync` skips that).
+`add` pins the newest commit that is at least 3 days old (`--latest` pins the branch head), so a freshly pushed commit never reaches every agent the moment it lands. Pick skills with `--skills` or `--all`; an attended run without either shows a numbered list. `--all` keeps no allowlist, so skills upstream adds later in the same directories arrive on `skill update`; a skill in a new directory needs another `add` or a `skill_dirs` edit. If `~/.agents/skills/<name>` already exists, `add` adopts it only when it is identical to the source (as `npx skills add` leaves it) and stops otherwise. Then it syncs (`--no-sync` skips that).
 
 `tackroom skill sources` also reads Claude Code's plugin registry and the `npx skills` lock. A source Claude Code already loads as a plugin (superpowers, say) is added with `exclude_agents: [claude]`, so the other agents get it and Claude does not see its skills twice.
 

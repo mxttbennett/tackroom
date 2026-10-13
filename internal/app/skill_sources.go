@@ -2,6 +2,8 @@ package app
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -57,11 +59,12 @@ func runSkillSourcesList(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("skill sources", flag.ContinueOnError)
 	configPath := flags.String("config", "", "Path to tackroom YAML config")
 	jsonOut := flags.Bool("json", false, "Print JSON")
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseInterleaved(flags, args)
+	if err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
-		return fmt.Errorf("unknown skill sources subcommand %q (want search or add)", flags.Arg(0))
+	if len(positional) != 0 {
+		return fmt.Errorf("unknown skill sources subcommand %q (want search or add)", positional[0])
 	}
 	repoRoot, home, cfg, _, err := loadContext(runOptions{ConfigPath: *configPath})
 	if err != nil {
@@ -80,7 +83,7 @@ func runSkillSourcesList(args []string, out io.Writer) error {
 	}
 	configured := []configuredSource{}
 	for _, src := range cfg.ExternalSkills {
-		item := configuredSource{Name: sourceName(src), URL: src.URL, ExcludeAgents: src.ExcludeAgents}
+		item := configuredSource{Name: sourceName(src), URL: redactURL(src.URL), ExcludeAgents: src.ExcludeAgents}
 		if pin := lockEntryFor(lock, src); pin != nil {
 			item.Commit = pin.Commit
 			item.Skills = pin.Materialized.Values()
@@ -92,7 +95,7 @@ func runSkillSourcesList(args []string, out io.Writer) error {
 	}
 	outside := []installedSource{}
 	for _, found := range detectInstalledSources(home) {
-		if !sourceConfigured(cfg, found.Repo) {
+		if !sourceConfigured(cfg, found.Repo, found.Path) {
 			outside = append(outside, found)
 		}
 	}
@@ -121,7 +124,7 @@ func runSkillSourcesList(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "\nInstalled outside tackroom:")
 		for _, found := range outside {
 			fmt.Fprintf(out, "  %-40s %s\n", sourceSlugWithPath(found.Repo, found.Path), found.Via)
-			fmt.Fprintf(out, "    add: tackroom skill sources add %s %s\n", sourceSlugWithPath(found.Repo, found.Path), suggestedSkillsFlag(found.Skills))
+			fmt.Fprintf(out, "    add: tackroom skill sources add %s %s\n", shellArg(sourceSlugWithPath(found.Repo, found.Path)), suggestedSkillsFlag(found.Skills))
 		}
 	}
 	fmt.Fprintln(out, "\nFind more: tackroom skill sources search <query>")
@@ -139,7 +142,30 @@ func suggestedSkillsFlag(skills []string) string {
 	if len(skills) == 0 {
 		return "--all"
 	}
-	return "--skills " + strings.Join(skills, ",")
+	return "--skills " + shellArg(strings.Join(skills, ","))
+}
+
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9._/,:@=+-]+$`)
+
+// shellArg makes a suggested command safe to paste, whatever names the plugin
+// registry or skill lock held.
+func shellArg(s string) string {
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return shellQuote(s)
+}
+
+// redactURL drops credentials and query strings from a source URL before it
+// is printed.
+func redactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.User == nil && parsed.RawQuery == "") {
+		return raw
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	return parsed.String()
 }
 
 func sourceSlugWithPath(repo, sub string) string {
@@ -150,10 +176,10 @@ func sourceSlugWithPath(repo, sub string) string {
 }
 
 // sourceConfigured reports whether tackroom.yaml already has a source from
-// this GitHub repo.
-func sourceConfigured(cfg config, repo string) bool {
+// this GitHub repo covering sub (any path of it when sub is empty).
+func sourceConfigured(cfg config, repo string, sub string) bool {
 	for _, src := range cfg.ExternalSkills {
-		if slug := githubSlug(src.URL); slug != "" && strings.EqualFold(slug, repo) {
+		if slug := githubSlug(src.URL); slug != "" && strings.EqualFold(slug, repo) && (sub == "" || overlapsPath(externalSkillDirs(src), sub)) {
 			return true
 		}
 	}
@@ -343,10 +369,11 @@ func runSkillSourcesSearch(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("skill sources search", flag.ContinueOnError)
 	configPath := flags.String("config", "", "Path to tackroom YAML config")
 	jsonOut := flags.Bool("json", false, "Print JSON")
-	if err := flags.Parse(args); err != nil {
+	positional, err := parseInterleaved(flags, args)
+	if err != nil {
 		return err
 	}
-	query := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	query := strings.TrimSpace(strings.Join(positional, " "))
 	if len(query) < 2 {
 		return errors.New("usage: tackroom skill sources search <query> (at least 2 characters)")
 	}
@@ -363,7 +390,7 @@ func runSkillSourcesSearch(args []string, out io.Writer) error {
 		installed[strings.ToLower(found.Repo)] = found.Via
 	}
 	for i := range sources {
-		if sourceConfigured(cfg, sources[i].Repo) {
+		if sourceConfigured(cfg, sources[i].Repo, "") {
 			sources[i].Installed = "in tackroom.yaml"
 		} else if via, ok := installed[strings.ToLower(sources[i].Repo)]; ok {
 			sources[i].Installed = via
@@ -465,24 +492,18 @@ func runSkillSourcesAdd(args []string, in io.Reader, out io.Writer, interactive 
 	name := flags.String("name", "", "Source name in tackroom.yaml (default: the repo name)")
 	latest := flags.Bool("latest", false, "Pin the newest commit instead of one at least 3 days old")
 	noSync := flags.Bool("no-sync", false, "Only write tackroom.yaml and tackroom.lock")
-	// Accept flags after the source argument too.
-	var positional []string
-	rest := args
-	for {
-		if err := flags.Parse(rest); err != nil {
-			return err
-		}
-		if flags.NArg() == 0 {
-			break
-		}
-		positional = append(positional, flags.Arg(0))
-		rest = flags.Args()[1:]
+	positional, err := parseInterleaved(flags, args)
+	if err != nil {
+		return err
 	}
 	if len(positional) != 1 {
 		return errors.New("usage: tackroom skill sources add <owner/repo[/path] | git URL> [--skills a,b | --all]")
 	}
 	if *all && strings.TrimSpace(*skillsCSV) != "" {
 		return errors.New("use either --skills or --all")
+	}
+	if *name != "" && !safeSourceName(*name) {
+		return fmt.Errorf("--name %q: use a plain directory name", *name)
 	}
 	repoURL, sub, urlBranch, err := parseSourceArg(positional[0])
 	if err != nil {
@@ -493,10 +514,6 @@ func runSkillSourcesAdd(args []string, in io.Reader, out io.Writer, interactive 
 	}
 
 	repoRoot, home, cfg, _, err := loadContext(runOptions{ConfigPath: *configPath})
-	if err != nil {
-		return err
-	}
-	shared, sharedPath, err := loadEditableMCPConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -560,32 +577,12 @@ func runSkillSourcesAdd(args []string, in io.Reader, out io.Writer, interactive 
 		}
 	}
 
-	lock, err := readLockFile(repoRoot)
-	if err != nil {
-		return err
-	}
-	if err := checkCanonicalSkillTargets(selected, cachePath, repoRoot, lock); err != nil {
-		return err
-	}
 	if plugin := matchingClaudePlugin(home, githubSlug(repoURL), sub); plugin != "" && agentEnabled(cfg, agentClaudeCode) {
 		src.ExcludeAgents = []string{agentClaudeCode}
 		fmt.Fprintf(out, "Claude Code already has this source as plugin %s; tackroom adds it for the other agents only.\n", plugin)
 	}
 
-	before, err := os.ReadFile(sharedPath)
-	if err != nil {
-		return err
-	}
-	shared.ExternalSkills = append(shared.ExternalSkills, src)
-	if err := writeEditableMCPConfig(sharedPath, shared); err != nil {
-		return err
-	}
-	lock.ExternalSkills = append(lock.ExternalSkills, externalLockEntry{
-		Name: sourceName(src), URL: src.URL, Branch: src.Branch, Commit: commit,
-		Materialized: newMaterializedSkillNames(names),
-	})
-	if err := writeLockFile(repoRoot, lock); err != nil {
-		_ = atomicConfigWrite(sharedPath, before, 0o644)
+	if err := writeSourceEntry(*configPath, repoRoot, src, commit, names, selected, cachePath); err != nil {
 		return err
 	}
 	label := repoURL
@@ -600,9 +597,85 @@ func runSkillSourcesAdd(args []string, in io.Reader, out io.Writer, interactive 
 	return runSync(runOptions{ConfigPath: *configPath, Stdout: out})
 }
 
+// writeSourceEntry re-reads tackroom.yaml and tackroom.lock (a clone takes long
+// enough for another add or a sync to change them), writes the lock pin first
+// so the source is never configured without it, then the config entry. A
+// failed config write restores the previous lock.
+func writeSourceEntry(configPath string, repoRoot string, src externalSkillSource, commit string, names []string, selected []sourceSkill, cachePath string) error {
+	shared, sharedPath, err := loadEditableMCPConfig(configPath)
+	if err != nil {
+		return err
+	}
+	for _, existing := range shared.ExternalSkills {
+		if strings.EqualFold(sourceName(existing), sourceName(src)) || (existing.URL == src.URL && overlaps(externalSkillDirs(existing), src.SkillDirs)) {
+			return fmt.Errorf("tackroom.yaml changed meanwhile and already has %q; run the add again", sourceName(existing))
+		}
+	}
+	lock, err := readLockFile(repoRoot)
+	if err != nil {
+		return err
+	}
+	if err := checkCanonicalSkillTargets(selected, cachePath, repoRoot, lock, sourceName(src)); err != nil {
+		return err
+	}
+	// Drop an entry left by a source of this name removed without a sync.
+	kept := lock.ExternalSkills[:0]
+	for _, entry := range lock.ExternalSkills {
+		if entry.Name != sourceName(src) {
+			kept = append(kept, entry)
+		}
+	}
+	lock.ExternalSkills = append(kept, externalLockEntry{
+		Name: sourceName(src), URL: src.URL, Branch: src.Branch, Commit: commit,
+		Materialized: newMaterializedSkillNames(names),
+	})
+	lockPath := lockFilePath(repoRoot)
+	previous, readErr := os.ReadFile(lockPath)
+	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+		return readErr
+	}
+	if err := writeLockFile(repoRoot, lock); err != nil {
+		return err
+	}
+	shared.ExternalSkills = append(shared.ExternalSkills, src)
+	if err := writeEditableMCPConfig(sharedPath, shared); err != nil {
+		var restoreErr error
+		if readErr != nil {
+			restoreErr = os.Remove(lockPath)
+		} else {
+			restoreErr = atomicConfigWrite(lockPath, previous, 0o644)
+		}
+		if restoreErr != nil {
+			restoreErr = fmt.Errorf("restore %s: %w", lockPath, restoreErr)
+		}
+		return errors.Join(err, restoreErr)
+	}
+	return nil
+}
+
+// parseInterleaved parses flags that may also follow positional arguments
+// (`search grill --json`) and returns the positional ones.
+func parseInterleaved(flags *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := flags.Parse(args); err != nil {
+			return nil, err
+		}
+		if flags.NArg() == 0 {
+			return positional, nil
+		}
+		positional = append(positional, flags.Arg(0))
+		args = flags.Args()[1:]
+	}
+}
+
+func safeSourceName(name string) bool {
+	return name != "." && name != ".." && !strings.ContainsAny(name, `/\`) && strings.TrimSpace(name) == name && name != ""
+}
+
 func taken(cfg config, name string) bool {
 	for _, src := range cfg.ExternalSkills {
-		if sourceName(src) == name {
+		if strings.EqualFold(sourceName(src), name) {
 			return true
 		}
 	}
@@ -649,6 +722,9 @@ func parseSourceArg(arg string) (repoURL string, sub string, branch string, err 
 		if perr == nil && parsed.Host == "github.com" {
 			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 			if len(parts) >= 4 && parts[2] == "tree" {
+				if !safeSubpath(parts[4:]) {
+					return "", "", "", fmt.Errorf("source %q: bad path", arg)
+				}
 				return "https://github.com/" + parts[0] + "/" + strings.TrimSuffix(parts[1], ".git"), strings.Join(parts[4:], "/"), parts[3], nil
 			}
 		}
@@ -658,20 +734,27 @@ func parseSourceArg(arg string) (repoURL string, sub string, branch string, err 
 	if len(parts) < 2 || githubSlug("https://github.com/"+parts[0]+"/"+parts[1]) == "" {
 		return "", "", "", fmt.Errorf("source %q: want owner/repo[/path] or a git URL", arg)
 	}
-	for _, part := range parts[2:] {
-		if part == "" || part == "." || part == ".." {
-			return "", "", "", fmt.Errorf("source %q: bad path", arg)
-		}
+	if !safeSubpath(parts[2:]) {
+		return "", "", "", fmt.Errorf("source %q: bad path", arg)
 	}
 	return "https://github.com/" + parts[0] + "/" + parts[1], strings.Join(parts[2:], "/"), "", nil
 }
 
+func safeSubpath(parts []string) bool {
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.Contains(part, `\`) {
+			return false
+		}
+	}
+	return true
+}
+
 func gitDefaultBranch(repoURL string) (string, error) {
-	output, err := exec.Command("git", "ls-remote", "--symref", repoURL, "HEAD").Output()
+	output, err := gitRemote("ls-remote", "--symref", repoURL, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("read default branch of %s: %w", repoURL, err)
 	}
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
 			if branch, _, ok := strings.Cut(ref, "\tHEAD"); ok {
 				return branch, nil
@@ -694,8 +777,8 @@ func fetchSourceForPin(src externalSkillSource, cachePath string, latest bool) (
 		if gitIsShallow(cachePath) {
 			fetchArgs = []string{"-C", cachePath, "fetch", "--quiet", "--unshallow", "origin", src.Branch}
 		}
-		if output, err := exec.Command("git", fetchArgs...).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("fetch %s: %w: %s", src.URL, err, strings.TrimSpace(string(output)))
+		if _, err := gitRemote(fetchArgs...); err != nil {
+			return "", fmt.Errorf("fetch %s: %w", src.URL, err)
 		}
 		ref = "FETCH_HEAD"
 	} else {
@@ -703,9 +786,8 @@ func fetchSourceForPin(src externalSkillSource, cachePath string, latest bool) (
 			return "", err
 		}
 		// History without blobs: enough to pick an older commit cheaply.
-		clone := exec.Command("git", "clone", "--quiet", "--filter=blob:none", "--no-checkout", "--branch", src.Branch, src.URL, cachePath)
-		if output, err := clone.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("clone %s: %w: %s", src.URL, err, strings.TrimSpace(string(output)))
+		if _, err := gitRemote("clone", "--quiet", "--filter=blob:none", "--no-checkout", "--branch", src.Branch, src.URL, cachePath); err != nil {
+			return "", fmt.Errorf("clone %s: %w", src.URL, err)
 		}
 	}
 	revArgs := []string{"-C", cachePath, "rev-list", "-1"}
@@ -720,10 +802,31 @@ func fetchSourceForPin(src externalSkillSource, cachePath string, latest bool) (
 	if commit == "" {
 		return "", fmt.Errorf("%s has no commit older than 3 days on %s; pass --latest to pin the newest one", src.URL, src.Branch)
 	}
-	if output, err := exec.Command("git", "-C", cachePath, "reset", "--quiet", "--hard", commit).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("check out %s: %w: %s", shortCommit(commit), err, strings.TrimSpace(string(output)))
+	// A blob-less clone fetches file contents here.
+	if _, err := gitRemote("-C", cachePath, "reset", "--quiet", "--hard", commit); err != nil {
+		return "", fmt.Errorf("check out %s: %w", shortCommit(commit), err)
 	}
 	return commit, nil
+}
+
+// gitRemoteTimeout bounds git commands that talk to the remote, so a stalled
+// server cannot block `add` forever.
+const gitRemoteTimeout = 5 * time.Minute
+
+func gitRemote(args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitRemoteTimeout)
+	defer cancel()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("timed out after %s", gitRemoteTimeout)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return string(output), nil
 }
 
 func gitCommitDate(repoPath string, commit string) string {
@@ -850,9 +953,12 @@ func uniqueSkills(found []sourceSkill) ([]sourceSkill, error) {
 // checkCanonicalSkillTargets refuses to overwrite ~/.agents/skills entries the
 // new source does not own. An identical copy (say, from `npx skills add`) is
 // adopted; a differing one stops the add.
-func checkCanonicalSkillTargets(selected []sourceSkill, cachePath string, repoRoot string, lock lockFile) error {
+func checkCanonicalSkillTargets(selected []sourceSkill, cachePath string, repoRoot string, lock lockFile, self string) error {
 	owners := map[string]string{}
 	for _, entry := range lock.ExternalSkills {
+		if entry.Name == self {
+			continue // a leftover entry of this source is replaced
+		}
 		for _, name := range entry.Materialized.Values() {
 			owners[name] = entry.Name
 		}

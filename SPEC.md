@@ -17,6 +17,8 @@ Status: requested 2026-10-13 as P2 after the first-run retest (finding N9). Setu
 - A curated catalog compiled into the binary; discovery uses skills.sh.
 - Installing plugins' hooks, commands or MCP servers; only skills are added.
 - Removing a source (`tackroom.yaml` edit plus `sync` covers it).
+- `--all` following skills into directories upstream adds later.
+- Locking `tackroom.yaml` against a concurrent `sync`; `add` re-reads both files right before writing and writes the lock first.
 
 ## Acceptance tests
 

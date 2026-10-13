@@ -177,10 +177,12 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 			return fmt.Errorf("config external_skills: cannot derive safe repo name from %q", src.URL)
 		}
-		if _, ok := seenExt[name]; ok {
+		// Names are cache directories; compare them the way a
+		// case-insensitive filesystem would.
+		if _, ok := seenExt[strings.ToLower(name)]; ok {
 			return fmt.Errorf("config external_skills repo %q is duplicated; set a distinct `name:` on one of them", name)
 		}
-		seenExt[name] = struct{}{}
+		seenExt[strings.ToLower(name)] = struct{}{}
 		for j, agentName := range src.ExcludeAgents {
 			agentName = normalizeAgentName(agentName)
 			if _, ok := seen[agentName]; len(seen) > 0 && !ok {

@@ -103,18 +103,22 @@ func writeLockFile(repoRoot string, lock lockFile) error {
 		return fmt.Errorf("yaml encode lock: %w", err)
 	}
 	header := []byte("# Managed by tackroom sync / tackroom skill update. Pins commits and materialized skill ownership.\n")
-	return os.WriteFile(lockFilePath(repoRoot), append(header, data...), 0o644)
+	// Atomic, so a failed write never leaves a truncated lock behind.
+	return atomicConfigWrite(lockFilePath(repoRoot), append(header, data...), 0o644)
 }
 
 // lockEntryFor returns the lock entry pinning a source, or nil when the source
 // is unpinned or the config branch/URL changed since the lock was written.
 func lockEntryFor(lock lockFile, src externalSkillSource) *externalLockEntry {
-	name := sourceName(src)
-	for i := range lock.ExternalSkills {
-		entry := &lock.ExternalSkills[i]
-		if entry.Name != name {
-			continue
+	entry := findLockEntry(lock, sourceName(src))
+	// A source that just got an explicit name keeps the pin it had under its
+	// repo basename until the next lock write renames the entry.
+	if entry == nil && src.Name != "" {
+		if legacy := findLockEntry(lock, repoName(src.URL)); legacy != nil && legacy.URL == src.URL {
+			entry = legacy
 		}
+	}
+	if entry != nil {
 		if entry.URL != src.URL || entry.Branch != src.Branch {
 			return nil
 		}
@@ -122,6 +126,15 @@ func lockEntryFor(lock lockFile, src externalSkillSource) *externalLockEntry {
 			return nil
 		}
 		return entry
+	}
+	return nil
+}
+
+func findLockEntry(lock lockFile, name string) *externalLockEntry {
+	for i := range lock.ExternalSkills {
+		if lock.ExternalSkills[i].Name == name {
+			return &lock.ExternalSkills[i]
+		}
 	}
 	return nil
 }

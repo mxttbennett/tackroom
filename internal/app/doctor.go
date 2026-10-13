@@ -69,7 +69,7 @@ func runDoctor(opts runOptions) error {
 			results = append(results, check.Run(repoRoot, home, cfg))
 		}
 	}
-	results = append(results, checkAgnix(repoRoot))
+	results = append(results, checkAgnix(repoRoot, cfg))
 	results = append(results, checkAgentsMDSize(repoRoot))
 	results = append(results, checkREADMESkillInventory(repoRoot))
 	results = append(results, checkMemsearchIndex(repoRoot, home))
@@ -355,7 +355,7 @@ type agnixReport struct {
 	Diagnostics []agnixDiagnostic `json:"diagnostics"`
 }
 
-func checkAgnix(repoRoot string) checkResult {
+func checkAgnix(repoRoot string, cfg config) checkResult {
 	if _, err := exec.LookPath("agnix"); err != nil {
 		return checkResult{"agnix", checkStatusWarn, "agnix not installed (optional lint); enable with: npm install -g agnix"}
 	}
@@ -366,9 +366,13 @@ func checkAgnix(repoRoot string) checkResult {
 	}
 	thirdParty := map[string]bool{}
 	if lock, err := readLockFile(repoRoot); err == nil {
-		for _, entry := range lock.ExternalSkills {
-			for _, name := range entry.Materialized.Values() {
-				thirdParty[name] = true
+		// Only sources still configured: a stale lock entry must not hide
+		// findings in a skill that is now local.
+		for _, src := range cfg.ExternalSkills {
+			if entry := lockEntryFor(lock, src); src.Materialize && entry != nil {
+				for _, name := range entry.Materialized.Values() {
+					thirdParty[name] = true
+				}
 			}
 		}
 	}

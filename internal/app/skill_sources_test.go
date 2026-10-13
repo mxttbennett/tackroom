@@ -303,3 +303,103 @@ func TestParseSourceArg(t *testing.T) {
 		}
 	}
 }
+
+func TestSkillSourcesAddReplacesALeftoverLockEntry(t *testing.T) {
+	home, configPath, upstream, oldCommit := newSkillSourceHome(t)
+	repoRoot := filepath.Join(home, ".agents")
+	// A source of the same name was dropped from tackroom.yaml without a sync.
+	stale := lockFile{ExternalSkills: []externalLockEntry{{Name: "upstream", URL: "file://" + upstream, Branch: "main", Commit: "0000000000000000000000000000000000000000", Materialized: newMaterializedSkillNames([]string{"grill"})}}}
+	if err := writeLockFile(repoRoot, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSkillSourcesAdd([]string{"file://" + upstream, "--skills", "tdd", "--config", configPath}, nil, &bytes.Buffer{}, false); err != nil {
+		t.Fatalf("add over a leftover lock entry: %v", err)
+	}
+	lock, _ := readLockFile(repoRoot)
+	if len(lock.ExternalSkills) != 1 || lock.ExternalSkills[0].Commit != oldCommit {
+		t.Fatalf("the leftover entry should be replaced by the new pin: %#v", lock.ExternalSkills)
+	}
+}
+
+func TestSkillSourcesSearchAcceptsTrailingFlags(t *testing.T) {
+	_, configPath, _, _ := newSkillSourceHome(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"skills":[{"name":"tdd","source":"mattpocock/skills","installs":5}]}`))
+	}))
+	defer server.Close()
+	previous := skillsRegistryURL
+	skillsRegistryURL = server.URL
+	defer func() { skillsRegistryURL = previous }()
+	var out bytes.Buffer
+	if err := runSkillSourcesSearch([]string{"tdd", "--json", "--config", configPath}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out.String()), "[") || !strings.Contains(out.String(), `"repo": "mattpocock/skills"`) {
+		t.Fatalf("search tdd --json should print JSON:\n%s", out.String())
+	}
+}
+
+func TestFindSourceSkillsForAPathThatIsASkill(t *testing.T) {
+	repo := t.TempDir()
+	writeSyncTestFile(t, filepath.Join(repo, "skills", "eng", "tdd", "SKILL.md"), []byte("x"))
+	writeSyncTestFile(t, filepath.Join(repo, "solo", "SKILL.md"), []byte("x"))
+	found, err := findSourceSkills(repo, "skills/eng/tdd")
+	if err != nil || len(found) != 1 || found[0] != (sourceSkill{Name: "tdd", Dir: "skills/eng"}) {
+		t.Fatalf("nested skill path = %#v, %v", found, err)
+	}
+	found, err = findSourceSkills(repo, "solo")
+	if err != nil || len(found) != 1 || found[0] != (sourceSkill{Name: "solo", Dir: "."}) {
+		t.Fatalf("top-level skill path = %#v, %v", found, err)
+	}
+	// A "." skill directory is a valid source root for sync.
+	home := t.TempDir()
+	cache := filepath.Join(externalCacheDir(home), "solo-src")
+	makeGitDir(t, cache)
+	writeSyncTestFile(t, filepath.Join(cache, "solo", "SKILL.md"), []byte("x"))
+	skills, err := discoverExternalSourceSkills(externalSkillSource{URL: "https://github.com/a/solo-src", SkillDirs: []string{"."}, Skills: []string{"solo"}}, home)
+	if err != nil || len(skills) != 1 || skills[0].Name != "solo" {
+		t.Fatalf("discover with skill_dirs [.] = %#v, %v", skills, err)
+	}
+}
+
+func TestSkillSourceSafetyHelpers(t *testing.T) {
+	for _, bad := range []string{"https://github.com/a/b/tree/main/../../x", "a/b/x\\y"} {
+		if _, _, _, err := parseSourceArg(bad); err == nil {
+			t.Errorf("parseSourceArg(%q) should fail", bad)
+		}
+	}
+	for _, name := range []string{"../x", "a/b", ".", ""} {
+		if safeSourceName(name) {
+			t.Errorf("safeSourceName(%q) should be false", name)
+		}
+	}
+	if got := shellArg("x/y; rm -rf ~"); got != `'x/y; rm -rf ~'` {
+		t.Errorf("shellArg = %s", got)
+	}
+	if got := shellArg("mattpocock/skills"); got != "mattpocock/skills" {
+		t.Errorf("shellArg = %s", got)
+	}
+	if got := redactURL("https://user:tok@github.com/a/b?token=x"); got != "https://github.com/a/b" {
+		t.Errorf("redactURL = %s", got)
+	}
+	cfg := config{ExternalSkills: []externalSkillSource{{URL: "https://github.com/anthropics/claude-plugins-official", SkillDirs: []string{"plugins/a/skills"}}}}
+	if !sourceConfigured(cfg, "anthropics/claude-plugins-official", "plugins/a") || sourceConfigured(cfg, "anthropics/claude-plugins-official", "plugins/b") {
+		t.Error("sourceConfigured should compare the path inside the repo")
+	}
+}
+
+func TestNamingASourceKeepsItsPin(t *testing.T) {
+	lock := lockFile{ExternalSkills: []externalLockEntry{{Name: "skills", URL: "https://github.com/mattpocock/skills", Branch: "main", Commit: "abc"}}}
+	named := externalSkillSource{Name: "mattpocock-skills", URL: "https://github.com/mattpocock/skills", Branch: "main"}
+	if entry := lockEntryFor(lock, named); entry == nil || entry.Commit != "abc" {
+		t.Fatalf("a newly named source should keep its pin, got %#v", entry)
+	}
+	other := externalSkillSource{Name: "anthropics-skills", URL: "https://github.com/anthropics/skills", Branch: "main"}
+	if entry := lockEntryFor(lock, other); entry != nil {
+		t.Fatalf("another repo must not take the pin, got %#v", entry)
+	}
+	cfg := config{Version: 1, ExternalSkills: []externalSkillSource{{URL: "https://github.com/a/Skills"}, {URL: "https://github.com/b/skills"}}}
+	if err := validateConfig(&cfg, t.TempDir(), false); err == nil {
+		t.Fatal("names differing only by case share a cache directory and must be rejected")
+	}
+}
