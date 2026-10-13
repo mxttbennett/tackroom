@@ -1,21 +1,31 @@
-# SPEC: MCP removal, secrets and a calm doctor
+# SPEC: external skill sources as a separate step
 
-Status: requested 2026-10-12 after the fix/first-run retest (findings N1, N2, N3, N7). PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
+Status: requested 2026-10-13 as P2 after the first-run retest (finding N9). Setup stays as it is; adding third-party skill sets is its own command. PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
 
 ## Behavior
 
-- **Removal (N1).** Sync records, per agent, the MCP servers it actually wrote (never an entry the agent already had) (`$XDG_STATE_HOME/tackroom/mcp-servers.json`, default `~/.local/state/...`). A recorded server that is no longer wanted for that agent (removed from `tackroom.yaml`, disabled, or dropped from its `agents`) and still present natively is `mcp stale` in `status` (exit 1, `agents[].mcp.stale` in JSON). The next `sync` copies the native config into the backup directory and removes the entry. `mcp remove` also records the targets whose native entry still matches the removed definition, so copies written before tracking existed are cleaned up. Other entries are never touched; a Codex file that does not parse is never edited. Setup and the web UI list the removals and ask, like other destructive changes; a declined removal stays recorded. The record is written atomically after every run, also after a failure; an unreadable record is an error, not an empty record.
-- **Secrets (N3).** `mcp import` names the redacted keys and warns that other targets get the literal `${KEY}` reference. OpenCode, Hermes and dsh follow the rule JSON and TOML already had: a `${KEY}` reference is satisfied by any native value and never replaces one. `mcp add` warns when `--env` stores a literal value. `mcp add`, `import` and `remove` print what they did and the next step.
-- **Doctor (N2, N7).** A package younger than three days, or a registry that cannot be reached, is a warning, not a failure. `hermes hooks` passes when no hook targets Hermes. The exit-code contract is unchanged (warnings still exit 1); `doctor --json` `failed` separates failures.
+- **`tackroom skill sources`** lists the sources in `tackroom.yaml` (pin, skill count, excluded agents) and the ones installed outside tackroom: Claude Code plugins that ship skills (resolved through `known_marketplaces.json` and each marketplace's `marketplace.json`) and `npx skills` installs (`$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json`). Each outside source gets a ready `add` command. `--json` prints both lists. No network.
+- **`tackroom skill sources search <query>`** queries the skills.sh search API, groups hits by GitHub repo with summed installs, and marks repos already in `tackroom.yaml` or installed elsewhere.
+- **`tackroom skill sources add <owner/repo[/path] | GitHub tree URL | git URL>`** clones the repo blob-less into the external cache and pins the newest commit at least 3 days old on the default branch (`--branch`, `--latest`). It finds skill directories (hidden directories and nested skills skipped), takes `--skills a,b`, `--all`, or a numbered pick on a terminal, and fails with the list otherwise. It writes one `external_skills` entry (`skill_dirs` from the picked skills' parents, `skills` allowlist unless `--all`, `materialize: true`) and a lock pin, then syncs unless `--no-sync`. It refuses a source already configured, and refuses to overwrite a different `~/.agents/skills/<name>` or a skill another source owns; an identical copy is adopted. A config write is rolled back if the lock write fails.
+- **Claude Code plugins.** When the repo (and path) is an installed Claude Code plugin and Claude is enabled, the entry gets `exclude_agents: [claude]`, and `add` says so.
+- **Config.** `external_skills` entries take an optional `name` (the cache directory, lock entry and `skill update` argument; default the repo basename) and `exclude_agents`. Two repos with the same basename need distinct names; `add` uses `<owner>-<repo>`. Names cannot contain path separators.
+- **Doctor.** agnix findings inside skills a lock entry materialized are ignored like findings in `external/` clones, since that content is upstream's and the external audit covers it.
+- **N9.** The generated `tackroom.yaml` comment points at `tackroom skill sources add`.
 
 ## Out of scope
 
-- Per-harness env reference syntax (OpenCode `{env:VAR}`, Codex `env_vars`).
-- Backups for every native write, a restore command (N5), `doctor` reporting unreadable configs (N4).
+- A curated catalog compiled into the binary; discovery uses skills.sh.
+- Installing plugins' hooks, commands or MCP servers; only skills are added.
+- Removing a source (`tackroom.yaml` edit plus `sync` covers it).
+- `--all` following skills into directories upstream adds later.
+- Locking `tackroom.yaml` against a concurrent `sync`; `add` re-reads both files right before writing and writes the lock first.
 
 ## Acceptance tests
 
-- `tackroom.yaml` drops a server: `status` reports it stale, `sync` removes it from Claude and Codex, keeps a hand-configured Codex server and the remaining managed one, and leaves a backup of the Codex config holding the old entry; `status` is then clean.
-- Remove works and is idempotent for Claude, Codex, OpenCode, Hermes, dsh and OpenClaw; a broken Codex TOML is left byte-identical.
-- A real secret in OpenCode, Hermes or dsh survives a sync of a `${KEY}` reference and counts as synced.
-- `go test ./...` passes.
+- `add` of a local repo with a 10-day-old and a fresh commit pins the old one, materializes only the picked skills from it, links them for Claude and Codex, and a second `add` of the same repo fails. `--latest --all` pins the head, owns every visible skill and writes no allowlist.
+- Without `--skills`/`--all` and no terminal, `add` fails listing the skills; on a terminal `1, tdd` picks two.
+- A differing `~/.agents/skills/grill` stops `add` and leaves `tackroom.yaml` untouched; an identical one is adopted.
+- `exclude_agents: [claude]` removes the source's links from Claude and keeps Codex; `status` is clean.
+- Detection resolves URL and path plugin sources, skips plugins without skills, groups `npx skills` entries by repo, and ignores non-GitHub ones.
+- Search groups registry hits by repo and drops non-repo sources.
+- `go test ./...` passes; a sandbox run adds obra/superpowers (Claude excluded), mattpocock/skills, anthropics/skills (as `anthropics-skills`) and cursor/plugins/pstack, and `doctor` passes.

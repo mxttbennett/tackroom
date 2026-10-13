@@ -33,6 +33,7 @@ type uiLink struct {
 }
 
 type externalSkillSource struct {
+	Name        string   `yaml:"name,omitempty"`
 	URL         string   `yaml:"url"`
 	SkillDir    string   `yaml:"skill_dir,omitempty"`
 	SkillDirs   []string `yaml:"skill_dirs,omitempty"`
@@ -41,6 +42,9 @@ type externalSkillSource struct {
 	Materialize bool     `yaml:"materialize,omitempty"`
 	MCP         bool     `yaml:"mcp,omitempty"`
 	MCPAgents   []string `yaml:"mcp_agents,omitempty"`
+	// ExcludeAgents lists agents that do not get this source's skills, e.g.
+	// Claude Code when the same repo is already installed there as a plugin.
+	ExcludeAgents []string `yaml:"exclude_agents,omitempty"`
 }
 
 type agentConfig struct {
@@ -367,13 +371,15 @@ func runDoctorCommand(args []string) error {
 
 func runSkillCommand(args []string) error {
 	if len(args) == 0 {
-		return errors.New("skill requires subcommand: new, list, info, update, promote")
+		return errors.New("skill requires subcommand: new, list, info, sources, update, promote")
 	}
 	switch args[0] {
 	case "new":
 		return runSkillify(args[1:])
 	case "update":
 		return runExternalUpdate(args[1:])
+	case "sources":
+		return runSkillSources(args[1:])
 	case "list":
 		return runSkillList(args[1:])
 	case "info":
@@ -529,6 +535,9 @@ func printAllUsage() {
 	fmt.Println("  tackroom skill new <name> [--description ...]")
 	fmt.Println("  tackroom skill list [--agents ...]")
 	fmt.Println("  tackroom skill info <name>")
+	fmt.Println("  tackroom skill sources [--json]           # external sources: configured and installed elsewhere")
+	fmt.Println("  tackroom skill sources search <query>     # find sources on skills.sh")
+	fmt.Println("  tackroom skill sources add <owner/repo[/path]> [--skills a,b | --all] [--latest] [--no-sync]")
 	fmt.Println("  tackroom skill update [name ...]")
 	fmt.Println("  tackroom skill promote <name-or-path> [--dry-run]")
 	fmt.Println("  tackroom publish [--target NAME] [--skills a,b] [--dry-run] [--json] [--yes]")

@@ -1,7 +1,7 @@
 version: 1
 agents: [] # populated by tackroom setup
 
-external_skills: [] # add third-party skill repos with `tackroom skill add`
+external_skills: [] # add third-party skill repos with `tackroom skill sources add`
 
 hooks:
   - name: memory-session-start

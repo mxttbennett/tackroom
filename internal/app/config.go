@@ -55,7 +55,7 @@ func loadConfig(repoRoot string, home string, overridePath string) (config, erro
 
 func mergeConfig(base *config, overlay config) {
 	base.Agents = mergeByKey(base.Agents, overlay.Agents, func(a agentConfig) string { return normalizeAgentName(a.Name) })
-	base.ExternalSkills = mergeByKey(base.ExternalSkills, overlay.ExternalSkills, func(s externalSkillSource) string { return repoName(s.URL) })
+	base.ExternalSkills = mergeByKey(base.ExternalSkills, overlay.ExternalSkills, sourceName)
 	base.MCPServers = mergeByKey(base.MCPServers, overlay.MCPServers, func(s mcpServerConfig) string { return strings.TrimSpace(s.Name) })
 	base.Hooks = mergeByKey(base.Hooks, overlay.Hooks, func(h hookConfig) string { return strings.TrimSpace(h.Name) })
 	base.PublishTargets = mergeByKey(base.PublishTargets, overlay.PublishTargets, func(t publishTarget) string { return strings.TrimSpace(t.Name) })
@@ -148,7 +148,7 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		}
 		src.SkillDir = strings.TrimSpace(src.SkillDir)
 		if src.SkillDir != "" && len(src.SkillDirs) > 0 {
-			return fmt.Errorf("config external_skills repo %q cannot set both skill_dir and skill_dirs", repoName(src.URL))
+			return fmt.Errorf("config external_skills repo %q cannot set both skill_dir and skill_dirs", sourceName(*src))
 		}
 		if src.SkillDir == "" && len(src.SkillDirs) == 0 {
 			src.SkillDir = "skills"
@@ -157,29 +157,39 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		if src.SkillDir != "" {
 			clean, err := cleanExternalSkillDir(src.SkillDir)
 			if err != nil {
-				return fmt.Errorf("config external_skills repo %q: %w", repoName(src.URL), err)
+				return fmt.Errorf("config external_skills repo %q: %w", sourceName(*src), err)
 			}
 			src.SkillDir = clean
 		}
 		for j := range src.SkillDirs {
 			clean, err := cleanExternalSkillDir(src.SkillDirs[j])
 			if err != nil {
-				return fmt.Errorf("config external_skills repo %q: %w", repoName(src.URL), err)
+				return fmt.Errorf("config external_skills repo %q: %w", sourceName(*src), err)
 			}
 			if _, exists := seenDirs[clean]; exists {
-				return fmt.Errorf("config external_skills repo %q has duplicate skill_dirs path %q", repoName(src.URL), clean)
+				return fmt.Errorf("config external_skills repo %q has duplicate skill_dirs path %q", sourceName(*src), clean)
 			}
 			seenDirs[clean] = struct{}{}
 			src.SkillDirs[j] = clean
 		}
-		name := repoName(src.URL)
-		if name == "" || name == "." || name == ".." {
+		src.Name = strings.TrimSpace(src.Name)
+		name := sourceName(*src)
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 			return fmt.Errorf("config external_skills: cannot derive safe repo name from %q", src.URL)
 		}
-		if _, ok := seenExt[name]; ok {
-			return fmt.Errorf("config external_skills repo %q is duplicated", name)
+		// Names are cache directories; compare them the way a
+		// case-insensitive filesystem would.
+		if _, ok := seenExt[strings.ToLower(name)]; ok {
+			return fmt.Errorf("config external_skills repo %q is duplicated; set a distinct `name:` on one of them", name)
 		}
-		seenExt[name] = struct{}{}
+		seenExt[strings.ToLower(name)] = struct{}{}
+		for j, agentName := range src.ExcludeAgents {
+			agentName = normalizeAgentName(agentName)
+			if _, ok := seen[agentName]; len(seen) > 0 && !ok {
+				return fmt.Errorf("config external_skills repo %q exclude_agents names unknown agent %q", name, agentName)
+			}
+			src.ExcludeAgents[j] = agentName
+		}
 
 		if src.MCP && len(src.MCPAgents) > 0 {
 			kept := src.MCPAgents[:0]

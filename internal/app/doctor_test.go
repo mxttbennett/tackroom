@@ -104,11 +104,12 @@ func TestScopeAgnixToCanonicalIgnoresExternalClones(t *testing.T) {
 			{Level: "warning", File: "external/skills/README.md", Line: 3, Message: "style"},
 			{Level: "error", File: "agents/tester.md", Line: 6, Message: "bad frontmatter"},
 			{Level: "info", File: "skills/tackroom/SKILL.md", Line: 1, Message: "note"},
+			{Level: "error", File: "skills/why/SKILL.md", Line: 89, Message: "deep reference"},
 		},
 	}
-	scoped, ignored := scopeAgnixToCanonical(report)
-	if ignored != 2 {
-		t.Fatalf("ignored = %d, want 2", ignored)
+	scoped, ignored := scopeAgnixToCanonical(report, map[string]bool{"why": true})
+	if ignored != 3 {
+		t.Fatalf("ignored = %d, want 3 (external clone and materialized copy)", ignored)
 	}
 	if scoped.Summary.Errors != 1 || scoped.Summary.Warnings != 0 || scoped.Summary.Info != 1 {
 		t.Fatalf("scoped summary = %+v", scoped.Summary)
@@ -120,7 +121,7 @@ func TestScopeAgnixToCanonicalIgnoresExternalClones(t *testing.T) {
 
 func TestCheckAgnixMissingBinaryWarns(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	res := checkAgnix(t.TempDir())
+	res := checkAgnix(t.TempDir(), config{})
 	if res.status != checkStatusWarn {
 		t.Fatalf("agnix missing-binary status = %q, want %q (%+v)", res.status, checkStatusWarn, res)
 	}

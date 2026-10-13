@@ -87,7 +87,7 @@ func harnessContextCosts(cfg config, repoRoot string, home string, selected []ag
 		if !isDetected(agent) {
 			continue
 		}
-		expected, err := expectedSkillsForAgent(base, home, cfg, agent.Name)
+		expected, err := expectedSkillsForAgent(base, repoRoot, home, cfg, agent.Name)
 		if err != nil {
 			return nil, err
 		}

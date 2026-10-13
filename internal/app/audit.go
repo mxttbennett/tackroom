@@ -120,7 +120,7 @@ func checkExternalSkillLock(repoRoot string, cfg config, home string) checkResul
 	var issues []string
 	pinned := 0
 	for _, src := range cfg.ExternalSkills {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		pin := lockEntryFor(lock, src)
 		if pin == nil {
 			issues = append(issues, fmt.Sprintf("%s unpinned (run tackroom sync)", name))
