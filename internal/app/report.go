@@ -137,11 +137,11 @@ func sourceLines(cfg config, home string) []string {
 	cacheRoot := externalCacheDir(home)
 	nameWidth := 0
 	for _, src := range cfg.ExternalSkills {
-		nameWidth = max(nameWidth, len(repoName(src.URL)))
+		nameWidth = max(nameWidth, len(sourceName(src)))
 	}
 	lines := make([]string, 0, len(cfg.ExternalSkills))
 	for _, src := range cfg.ExternalSkills {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		state := ui.Mark("fail") + " not cloned"
 		if hasDir(filepath.Join(cacheRoot, name, ".git")) {
 			state = ui.Mark("ok") + " " + externalSkillCommit(filepath.Join(cacheRoot, name))

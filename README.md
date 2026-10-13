@@ -83,7 +83,7 @@ OpenClaw MCP servers go to `mcp.servers` in `~/.openclaw/openclaw.json`; a runni
 
 ## Skills
 
-A skill is a directory under `~/.agents/skills/` with a `SKILL.md` ([agentskills.io](https://agentskills.io) convention) — create once, appears everywhere. External skills are treated like dependencies: pinned in `tackroom.lock`, materialized for diffing, audited by `tackroom doctor`. Details in [docs/skills.md](docs/skills.md).
+A skill is a directory under `~/.agents/skills/` with a `SKILL.md` ([agentskills.io](https://agentskills.io) convention) — create once, appears everywhere. External skills are treated like dependencies: pinned in `tackroom.lock`, materialized for diffing, audited by `tackroom doctor`. Add a source such as `mattpocock/skills` or `obra/superpowers` with `tackroom skill sources add` (find more with `tackroom skill sources search`); it also spots sources already installed as Claude Code plugins or with `npx skills`. Details in [docs/skills.md](docs/skills.md).
 
 ## Memory
 

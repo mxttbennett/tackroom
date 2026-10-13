@@ -109,7 +109,7 @@ func writeLockFile(repoRoot string, lock lockFile) error {
 // lockEntryFor returns the lock entry pinning a source, or nil when the source
 // is unpinned or the config branch/URL changed since the lock was written.
 func lockEntryFor(lock lockFile, src externalSkillSource) *externalLockEntry {
-	name := repoName(src.URL)
+	name := sourceName(src)
 	for i := range lock.ExternalSkills {
 		entry := &lock.ExternalSkills[i]
 		if entry.Name != name {
@@ -133,7 +133,7 @@ func rebuildLockEntries(sources []externalSkillSource, home string, lock lockFil
 	cacheRoot := externalCacheDir(home)
 	var entries []externalLockEntry
 	for _, src := range sources {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		commit := externalSkillCommitFull(filepath.Join(cacheRoot, name))
 		pin := lockEntryFor(lock, src)
 		if commit == "" && pin != nil {

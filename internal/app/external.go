@@ -16,6 +16,16 @@ func externalCacheDir(home string) string {
 	return filepath.Join(home, ".agents", "external")
 }
 
+// sourceName identifies an external source: its cache directory, lock entry
+// and `tackroom skill update` argument. It is the optional name, else the
+// repository basename, so two repos both called "skills" can coexist.
+func sourceName(src externalSkillSource) string {
+	if name := strings.TrimSpace(src.Name); name != "" {
+		return name
+	}
+	return repoName(src.URL)
+}
+
 func repoName(url string) string {
 	u := strings.TrimSpace(url)
 	u = strings.TrimSuffix(u, "/")
@@ -42,7 +52,7 @@ func syncExternalRepos(sources []externalSkillSource, home string, repoRoot stri
 	}
 	unavailable := make(map[string]bool)
 	for _, src := range sources {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		cachePath := filepath.Join(cacheRoot, name)
 		if err := refreshExternalCache(src, cachePath, lock); err != nil {
 			if committedMaterializationCurrent(src, lock, repoRoot) {
@@ -69,7 +79,7 @@ func syncExternalRepos(sources []externalSkillSource, home string, repoRoot stri
 // refreshExternalCache brings the local cache for src to its lock pin (or the
 // branch head when unpinned), cloning it first when absent.
 func refreshExternalCache(src externalSkillSource, cachePath string, lock lockFile) error {
-	name := repoName(src.URL)
+	name := sourceName(src)
 	if hasDir(filepath.Join(cachePath, ".git")) {
 		setURL := exec.Command("git", "-C", cachePath, "remote", "set-url", "origin", src.URL)
 		if err := setURL.Run(); err != nil {
@@ -126,7 +136,7 @@ func updateExternalRepos(sources []externalSkillSource, home string, repoRoot st
 		return fmt.Errorf("create %s: %w", cacheRoot, err)
 	}
 	for _, src := range selected {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		cachePath := filepath.Join(cacheRoot, name)
 		if !hasDir(filepath.Join(cachePath, ".git")) {
 			if err := gitClone(src.URL, src.Branch, cachePath); err != nil {
@@ -156,7 +166,7 @@ func selectExternalSources(sources []externalSkillSource, names []string) ([]ext
 	}
 	index := make(map[string]externalSkillSource, len(sources))
 	for _, src := range sources {
-		index[repoName(src.URL)] = src
+		index[sourceName(src)] = src
 	}
 	var selected []externalSkillSource
 	for _, name := range names {
@@ -172,7 +182,7 @@ func selectExternalSources(sources []externalSkillSource, names []string) ([]ext
 func externalSourceNames(sources []externalSkillSource) []string {
 	var names []string
 	for _, src := range sources {
-		names = append(names, repoName(src.URL))
+		names = append(names, sourceName(src))
 	}
 	return names
 }
@@ -189,7 +199,7 @@ func writeLockIfChanged(sources []externalSkillSource, home string, repoRoot str
 func writeLockAfterUpdate(sources []externalSkillSource, home string, repoRoot string, lock lockFile, selected []externalSkillSource) error {
 	selectedNames := make(map[string]bool, len(selected))
 	for _, src := range selected {
-		selectedNames[repoName(src.URL)] = true
+		selectedNames[sourceName(src)] = true
 	}
 	entries := rebuildLockEntries(sources, home, lock)
 	for i := range entries {
@@ -197,7 +207,7 @@ func writeLockAfterUpdate(sources []externalSkillSource, home string, repoRoot s
 			continue
 		}
 		for _, src := range sources {
-			if repoName(src.URL) != entries[i].Name {
+			if sourceName(src) != entries[i].Name {
 				continue
 			}
 			if pin := lockEntryFor(lock, src); pin != nil {
@@ -308,7 +318,7 @@ func discoverExternalSkillSet(sources []externalSkillSource, home string) (map[s
 }
 
 func discoverExternalSourceSkills(src externalSkillSource, home string) ([]discoveredSkill, error) {
-	name := repoName(src.URL)
+	name := sourceName(src)
 	cachePath := filepath.Join(externalCacheDir(home), name)
 	if !hasDir(filepath.Join(cachePath, ".git")) {
 		return nil, fmt.Errorf("external source %s not cloned; run tackroom sync", src.URL)
@@ -465,8 +475,8 @@ func planMaterializedSkills(sources []externalSkillSource, home string, repoRoot
 		}
 	}
 	for _, src := range sources {
-		sourceScope[repoName(src.URL)] = true
-		if !src.Materialize || keep[repoName(src.URL)] {
+		sourceScope[sourceName(src)] = true
+		if !src.Materialize || keep[sourceName(src)] {
 			continue
 		}
 		skills, err := discoverExternalSourceSkills(src, home)
@@ -479,7 +489,7 @@ func planMaterializedSkills(sources []externalSkillSource, home string, repoRoot
 			}
 			item := materializedSkill{
 				Name:       skill.Name,
-				SourceName: repoName(src.URL),
+				SourceName: sourceName(src),
 				SourcePath: skill.Path,
 				TargetPath: filepath.Join(repoRoot, "skills", skill.Name),
 			}

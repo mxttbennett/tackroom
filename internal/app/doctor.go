@@ -364,10 +364,18 @@ func checkAgnix(repoRoot string) checkResult {
 	if parseErr != nil {
 		return checkResult{"agnix", checkStatusFail, fmt.Sprintf("could not parse agnix output: %s", parseErr)}
 	}
-	report, ignored := scopeAgnixToCanonical(report)
+	thirdParty := map[string]bool{}
+	if lock, err := readLockFile(repoRoot); err == nil {
+		for _, entry := range lock.ExternalSkills {
+			for _, name := range entry.Materialized.Values() {
+				thirdParty[name] = true
+			}
+		}
+	}
+	report, ignored := scopeAgnixToCanonical(report, thirdParty)
 	detail := agnixDetail(report)
 	if ignored > 0 {
-		detail = fmt.Sprintf("%s (%d findings in external/ clones ignored; upstream sources are audited separately)", detail, ignored)
+		detail = fmt.Sprintf("%s (%d findings in third-party skills ignored; upstream sources are audited separately)", detail, ignored)
 	}
 	if report.Summary.Errors > 0 {
 		return checkResult{"agnix", checkStatusFail, detail}
@@ -375,16 +383,18 @@ func checkAgnix(repoRoot string) checkResult {
 	return checkResult{"agnix", checkStatusPass, detail}
 }
 
-// scopeAgnixToCanonical drops findings from external/ upstream clones: that
-// content is not authored here, and external sources get their own audit
-// check. Summary counts are recomputed from the kept diagnostics.
-func scopeAgnixToCanonical(report agnixReport) (agnixReport, int) {
+// scopeAgnixToCanonical drops findings from external/ upstream clones and
+// from skills/<name> copies materialized from them (thirdParty): that content
+// is not authored here, and external sources get their own audit check.
+// Summary counts are recomputed from the kept diagnostics.
+func scopeAgnixToCanonical(report agnixReport, thirdParty map[string]bool) (agnixReport, int) {
 	kept := report.Diagnostics[:0]
 	ignored := 0
 	var summary agnixSummary
 	for _, diagnostic := range report.Diagnostics {
 		normalized := filepath.ToSlash(diagnostic.File)
-		if strings.HasPrefix(normalized, "external/") || strings.Contains(normalized, "/external/") {
+		skill, _, _ := strings.Cut(strings.TrimPrefix(normalized, "skills/"), "/")
+		if strings.HasPrefix(normalized, "external/") || strings.Contains(normalized, "/external/") || (strings.HasPrefix(normalized, "skills/") && thirdParty[skill]) {
 			ignored++
 			continue
 		}
@@ -583,7 +593,7 @@ func checkExternalSkillSources(cfg config, home string) checkResult {
 	valid := 0
 	for _, src := range cfg.ExternalSkills {
 		if _, err := discoverExternalSourceSkills(src, home); err != nil {
-			issues = append(issues, fmt.Sprintf("%s: %v", repoName(src.URL), err))
+			issues = append(issues, fmt.Sprintf("%s: %v", sourceName(src), err))
 			continue
 		}
 		valid++
@@ -617,15 +627,15 @@ func checkMaterializedExternalSkills(repoRoot string, cfg config, home string) c
 		if !src.Materialize {
 			continue
 		}
-		materializedCacheRoots = append(materializedCacheRoots, filepath.Join(externalCacheDir(home), repoName(src.URL)))
+		materializedCacheRoots = append(materializedCacheRoots, filepath.Join(externalCacheDir(home), sourceName(src)))
 		pin := lockEntryFor(lock, src)
 		if pin == nil {
-			issues = append(issues, fmt.Sprintf("%s has no matching lock pin", repoName(src.URL)))
+			issues = append(issues, fmt.Sprintf("%s has no matching lock pin", sourceName(src)))
 			continue
 		}
 		skills, err := discoverExternalSourceSkills(src, home)
 		if err != nil {
-			issues = append(issues, fmt.Sprintf("%s: %v", repoName(src.URL), err))
+			issues = append(issues, fmt.Sprintf("%s: %v", sourceName(src), err))
 			continue
 		}
 		owners := make(map[string]bool)

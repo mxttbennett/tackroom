@@ -77,8 +77,41 @@ func discoverLocalSkills(repoRoot string, _ string) ([]discoveredSkill, error) {
 	return discovered, nil
 }
 
-func expectedSkillsForAgent(base map[string]string, _ string, _ config, _ string) (map[string]string, error) {
-	return base, nil
+// expectedSkillsForAgent drops the skills of external sources that exclude
+// this agent. A materialized source's skills are the ones its lock entry owns;
+// a direct source's are discovered in its cache.
+func expectedSkillsForAgent(base map[string]string, repoRoot string, home string, cfg config, agentName string) (map[string]string, error) {
+	var excluded []externalSkillSource
+	for _, src := range cfg.ExternalSkills {
+		if stringInSlice(normalizeAgentName(agentName), src.ExcludeAgents) {
+			excluded = append(excluded, src)
+		}
+	}
+	if len(excluded) == 0 {
+		return base, nil
+	}
+	lock, err := readLockFile(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make(map[string]string, len(base))
+	for name, path := range base {
+		filtered[name] = path
+	}
+	for _, src := range excluded {
+		var names []string
+		if pin := lockEntryFor(lock, src); src.Materialize && pin != nil {
+			names = pin.Materialized.Values()
+		} else if skills, err := discoverExternalSourceSkills(src, home); err == nil {
+			for _, skill := range skills {
+				names = append(names, skill.Name)
+			}
+		}
+		for _, name := range names {
+			delete(filtered, name)
+		}
+	}
+	return filtered, nil
 }
 
 func inspectRepoLink(repoRoot string, home string) (repoLinkReport, error) {
@@ -162,7 +195,7 @@ func inspectAgents(selected []agentConfig, expected map[string]string, repoRoot 
 		agentExpected := expected
 		var err error
 		if isDetected(agent) {
-			agentExpected, err = expectedSkillsForAgent(expected, home, cfg, agent.Name)
+			agentExpected, err = expectedSkillsForAgent(expected, repoRoot, home, cfg, agent.Name)
 		}
 		report := agentReport{}
 		if err == nil {

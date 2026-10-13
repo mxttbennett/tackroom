@@ -218,7 +218,7 @@ func injectPluginMCPServers(cfg *config, home string) {
 		if !src.MCP {
 			continue
 		}
-		name := repoName(src.URL)
+		name := sourceName(src)
 		cachePath := filepath.Join(cacheRoot, name)
 		if !hasDir(filepath.Join(cachePath, ".git")) {
 			continue

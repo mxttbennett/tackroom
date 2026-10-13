@@ -110,7 +110,7 @@ func auditRepo(repoRoot, home string, cfg config) []auditFinding {
 	lock, _ := readLockFile(repoRoot)
 	cacheRoot := externalCacheDir(home)
 	for _, src := range cfg.ExternalSkills {
-		name := repoName(src.URL)
+		name := sourceName(src)
 		if lockEntryFor(lock, src) == nil {
 			findings = append(findings, auditFinding{
 				auditWarn, name, lockFileName,

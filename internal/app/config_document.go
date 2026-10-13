@@ -600,6 +600,9 @@ func stableNodeKey(node *yaml.Node, section string) string {
 		return ""
 	}
 	if section == "external_skills" {
+		if name := strings.TrimSpace(valueString(mappingValue(node, "name"))); name != "" {
+			return name
+		}
 		return repoName(valueString(mappingValue(node, "url")))
 	}
 	key := strings.TrimSpace(valueString(mappingValue(node, "name")))
