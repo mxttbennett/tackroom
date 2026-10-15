@@ -225,7 +225,7 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		// Fail before sync writes anything, not halfway through the agents.
 		if server := cfg.MCPServers[i]; server.URL != "" && mcpServerTargetsAgent(*cfg, server, agentCodex) {
 			if _, err := splitCodexHeaders(server.Headers); err != nil {
-				return fmt.Errorf("config MCP server %s: %w, or leave codex out with agents:", server.Name, err)
+				return fmt.Errorf("config MCP server %s: %w, or leave codex out of its agents list", server.Name, err)
 			}
 		}
 		if _, ok := seenMCP[cfg.MCPServers[i].Name]; ok {
