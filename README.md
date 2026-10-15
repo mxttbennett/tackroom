@@ -136,6 +136,18 @@ tackroom restore  [<backup> | latest] [--dry-run]   # put backed-up native files
 
 `status`, `sync` and `doctor` take `--json` for scripts and agents; exit code 1 means something is out of sync or failed. `tackroom mcp remove <name>` followed by `sync` removes the server from every agent tackroom wrote it to, and from agents whose entry still matches its definition (the native config is backed up first). Other hand-configured servers stay. If a native file differs from the shared copy (say a hand-written `~/.claude/CLAUDE.md`), `sync` leaves that agent alone, syncs the others, and says how to resolve it; `sync --replace-conflicts` moves such files to `~/.local/state/tackroom/backups/<time>/` and links the shared copy. `setup` does this for you after asking (`--yes` accepts). `tackroom restore` lists those backups and puts one back; whatever it replaces is saved as a new backup, so `tackroom restore latest` undoes it.
 
+Hooks are declared in `tackroom.yaml` (there is no `hook add` yet) and rendered with each agent's event names:
+
+```yaml
+hooks:
+  - name: notify-stop
+    enabled: true                 # entries stay off unless enabled
+    event: Stop                   # Claude Code event names
+    command: ~/.agents/hooks/notify.sh
+    timeout: 10                   # seconds
+    agents: [claude, codex, gemini]   # optional; default: every agent with hooks
+```
+
 MCP servers are stdio (`mcp add NAME --command ...`) or remote (`mcp add NAME --url https://... --header 'Authorization: Bearer ${TOKEN}'`). Remote servers go to Claude Code, Codex, Pi, Grok Build, Cursor and Gemini CLI in each one's format (Codex reads `Bearer ${TOKEN}` through `bearer_token_env_var`, Cursor as `${env:TOKEN}`); other agents get stdio servers only for now. As with env, a `${VAR}` header never replaces a real value already in an agent's config.
 
 `sync` prints the skills, agents, MCP servers, hooks, packages and plugins the run changed (harnesses with identical changes grouped), a table with one row per harness, and every managed item per harness, with long lists wrapped to the terminal. `status` stays compact; `--verbose` adds the full lists. Both drop escape codes when output is not a terminal and color when `NO_COLOR` is set.

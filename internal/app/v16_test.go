@@ -220,3 +220,87 @@ func TestMCPAddRemoteServerFromTheCLI(t *testing.T) {
 		t.Fatal("--url with --command must be refused")
 	}
 }
+
+// Findings from the 1.6 end-to-end run (Gemini 4 Argon via OpenCode).
+
+func TestSetupKeepsARemoteBearerTokenOutOfTackroomYAML(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	fakePath(t, "claude", "codex")
+	writeSyncTestFile(t, filepath.Join(home, ".claude.json"), []byte(`{"mcpServers":{"acme":{"type":"http","url":"https://api.acme.example.com/mcp","headers":{"Authorization":"Bearer sk-test-123"}}}}`))
+	var out bytes.Buffer
+	if err := runSetup(runOptions{Agents: "claude,codex", MemoryTier: memoryTierOff, AssumeYes: true, Stdin: strings.NewReader(""), Stdout: &out}); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out.String())
+	}
+	cfg, _ := os.ReadFile(filepath.Join(home, ".agents", "tackroom.yaml"))
+	if strings.Contains(string(cfg), "sk-test-123") || !strings.Contains(string(cfg), "Bearer ${ACME_AUTHORIZATION}") {
+		t.Fatalf("tackroom.yaml must hold a reference, not the token:\n%s", cfg)
+	}
+	if native, _ := os.ReadFile(filepath.Join(home, ".claude.json")); !strings.Contains(string(native), "sk-test-123") {
+		t.Fatalf("Claude Code lost its token:\n%s", native)
+	}
+}
+
+func TestMaterializedSkillProgressStaysOffStdout(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "tdd")
+	writeSyncTestFile(t, filepath.Join(source, "SKILL.md"), []byte("---\nname: tdd\ndescription: d\n---\n"))
+	target := filepath.Join(t.TempDir(), "skills", "tdd")
+	stdout, _, err := captureCLIOutput(t, func() error {
+		return applyMaterializedSkills([]materializedSkill{{Name: "tdd", SourceName: "src", SourcePath: source, TargetPath: target}})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "" {
+		t.Fatalf("sync --json owns stdout; got %q", stdout)
+	}
+}
+
+func TestCodexHeaderProblemsFailBeforeSync(t *testing.T) {
+	home := t.TempDir()
+	server := mcpServerConfig{Name: "bad", Enabled: true, URL: "https://mcp.example.com/mcp", Headers: map[string]string{"X-Custom": "prefix-${FOO}"}}
+	cfg := config{Version: 1, Agents: []agentConfig{{Name: "codex", Enabled: true, SkillRoot: "~/.codex/skills"}, {Name: "claude", Enabled: true, SkillRoot: "~/.claude/skills"}}, MCPServers: []mcpServerConfig{server}}
+	if err := validateConfig(&cfg, home, false); err == nil || !strings.Contains(err.Error(), "leave codex out") {
+		t.Fatalf("want a config error naming the fix, got %v", err)
+	}
+	server.Agents = []string{"claude"}
+	cfg.MCPServers = []mcpServerConfig{server}
+	if err := validateConfig(&cfg, home, false); err != nil {
+		t.Fatalf("without codex the header is fine: %v", err)
+	}
+}
+
+func TestRestoreSkipsALinkThatAlreadyPointsTheSamePlace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink("/shared/AGENTS.md", filepath.Join(dir, "backed")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/shared/AGENTS.md", filepath.Join(dir, "current")); err != nil {
+		t.Fatal(err)
+	}
+	same, err := restoreTargetMatches(restoreItem{Source: filepath.Join(dir, "backed"), Target: filepath.Join(dir, "current")})
+	if err != nil || !same {
+		t.Fatalf("identical links should match: %v %v", same, err)
+	}
+}
+
+func TestHooksForEveryAgentSkipAgentsWithoutHooksQuietly(t *testing.T) {
+	cfg := config{Hooks: []hookConfig{{Name: "all", Enabled: true, Event: "Stop", Command: "x"}, {Name: "named", Enabled: true, Event: "Stop", Command: "y", Agents: []string{agentPi}}}}
+	var report agentReport
+	if err := augmentHookReport(&report, agentConfig{Name: agentPi}, cfg, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(report.UnsupportedHook, ",") != "named" {
+		t.Fatalf("only a hook naming pi is worth a notice, got %v", report.UnsupportedHook)
+	}
+}
+
+func TestGroupHelpExitsZero(t *testing.T) {
+	for _, group := range []string{"mcp", "skill", "hook", "config"} {
+		stdout, _, err := captureCLIOutput(t, func() error { return Run([]string{group, "--help"}) })
+		if err != nil || !strings.Contains(stdout, "tackroom "+group+" ") {
+			t.Fatalf("%s --help: %v\n%s", group, err, stdout)
+		}
+	}
+}

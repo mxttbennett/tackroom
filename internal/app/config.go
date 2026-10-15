@@ -222,6 +222,12 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		if err := validateMCPTransport(cfg.MCPServers[i]); err != nil {
 			return err
 		}
+		// Fail before sync writes anything, not halfway through the agents.
+		if server := cfg.MCPServers[i]; server.URL != "" && mcpServerTargetsAgent(*cfg, server, agentCodex) {
+			if _, err := splitCodexHeaders(server.Headers); err != nil {
+				return fmt.Errorf("config MCP server %s: %w, or leave codex out with agents:", server.Name, err)
+			}
+		}
 		if _, ok := seenMCP[cfg.MCPServers[i].Name]; ok {
 			return fmt.Errorf("config MCP server %s is duplicated", cfg.MCPServers[i].Name)
 		}
@@ -506,6 +512,25 @@ func expandPath(path string, home string) string {
 // configs and CLI arguments keep working.
 var legacyAgentNames = map[string]string{
 	"claude-code": agentClaudeCode,
+}
+
+// mcpServerTargetsAgent reports whether a server is meant for an agent: named
+// in its agents list, or the list is empty and the agent is enabled.
+func mcpServerTargetsAgent(cfg config, server mcpServerConfig, agent string) bool {
+	if len(server.Agents) > 0 {
+		for _, name := range server.Agents {
+			if normalizeAgentName(name) == agent {
+				return true
+			}
+		}
+		return false
+	}
+	for _, configured := range cfg.Agents {
+		if configured.Enabled && normalizeAgentName(configured.Name) == agent {
+			return true
+		}
+	}
+	return false
 }
 
 // validateMCPTransport requires exactly one of command (stdio) or url

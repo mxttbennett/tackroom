@@ -27,6 +27,11 @@ func runRestore(args []string) error {
 func restoreBackup(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
 	dryRun := flags.Bool("dry-run", false, "Show what would be restored without changing anything")
+	flags.Usage = func() {
+		fmt.Fprintln(flags.Output(), "usage: tackroom restore [<backup> | latest] [--dry-run]")
+		fmt.Fprintln(flags.Output(), "  without arguments: list backups, newest first")
+		flags.PrintDefaults()
+	}
 	positional, err := parseInterleaved(flags, args)
 	if err != nil {
 		return err
@@ -222,7 +227,13 @@ func restoreTargetMatches(item restoreItem) (bool, error) {
 		return false, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return false, nil
+		// A link matches only a backed-up link to the same place.
+		backed, err := os.Readlink(item.Source)
+		if err != nil {
+			return false, nil
+		}
+		current, err := os.Readlink(item.Target)
+		return err == nil && current == backed, nil
 	}
 	if item.Dir {
 		if !info.IsDir() {

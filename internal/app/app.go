@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 type config struct {
@@ -375,6 +376,10 @@ func runSkillCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New("skill requires subcommand: new, list, info, sources, update, promote")
 	}
+	if isHelpArg(args[0]) {
+		printGroupUsage("skill")
+		return nil
+	}
 	switch args[0] {
 	case "new":
 		return runSkillify(args[1:])
@@ -525,29 +530,49 @@ func printUsage() {
 	fmt.Println("Run \"tackroom help --all\" for flags and maintenance commands.")
 }
 
+// canonicalForms is the full command reference; group --help prints its lines.
+var canonicalForms = []string{
+	"  tackroom setup [--memory off|basic|memsearch] [--agents ...] [--yes] [--dry-run] [--json]",
+	"  tackroom status [--verbose] [--agents ...]",
+	"  tackroom sync [--pull] [--agents ...]",
+	"  tackroom doctor [--e2e] [--agents ...]",
+	"  tackroom config <validate|print> [--config PATH]",
+	"  tackroom view [--addr 127.0.0.1:8765] [--no-open] [--secure-cookie] [--ssh-host user@host] [--token-file PATH]",
+	"  tackroom skill new <name> [--description ...]",
+	"  tackroom skill list [--agents ...]",
+	"  tackroom skill info <name>",
+	"  tackroom skill sources [--json]           # external sources: configured and installed elsewhere",
+	"  tackroom skill sources search <query>     # find sources on skills.sh",
+	"  tackroom skill sources add <owner/repo[/path]> [--skills a,b | --all] [--latest] [--no-sync]",
+	"  tackroom skill update [name ...]",
+	"  tackroom skill promote <name-or-path> [--dry-run]",
+	"  tackroom publish [--target NAME] [--skills a,b] [--dry-run] [--json] [--yes]",
+	"  tackroom mcp <list|add|import|remove> [options]   # add: --command ... or --url ... [--header 'Name: value']",
+	"  tackroom restore [<backup> | latest] [--dry-run]",
+	"  tackroom hook list [--agents ...] [query]",
+	"  tackroom hook remove [--dry-run] [--agents ...] <query>",
+}
+
+// printGroupUsage answers `tackroom <group> --help` with that group's forms.
+func printGroupUsage(group string) {
+	for _, line := range canonicalForms {
+		if strings.HasPrefix(line, "  tackroom "+group+" ") {
+			fmt.Println(line)
+		}
+	}
+}
+
+func isHelpArg(arg string) bool {
+	return arg == "-h" || arg == "--help" || arg == "help"
+}
+
 func printAllUsage() {
 	printUsage()
 	fmt.Println()
 	fmt.Println("Canonical forms:")
-	fmt.Println("  tackroom setup [--memory off|basic|memsearch] [--agents ...] [--yes] [--dry-run] [--json]")
-	fmt.Println("  tackroom status [--verbose] [--agents ...]")
-	fmt.Println("  tackroom sync [--pull] [--agents ...]")
-	fmt.Println("  tackroom doctor [--e2e] [--agents ...]")
-	fmt.Println("  tackroom config <validate|print> [--config PATH]")
-	fmt.Println("  tackroom view [--addr 127.0.0.1:8765] [--no-open] [--secure-cookie] [--ssh-host user@host] [--token-file PATH]")
-	fmt.Println("  tackroom skill new <name> [--description ...]")
-	fmt.Println("  tackroom skill list [--agents ...]")
-	fmt.Println("  tackroom skill info <name>")
-	fmt.Println("  tackroom skill sources [--json]           # external sources: configured and installed elsewhere")
-	fmt.Println("  tackroom skill sources search <query>     # find sources on skills.sh")
-	fmt.Println("  tackroom skill sources add <owner/repo[/path]> [--skills a,b | --all] [--latest] [--no-sync]")
-	fmt.Println("  tackroom skill update [name ...]")
-	fmt.Println("  tackroom skill promote <name-or-path> [--dry-run]")
-	fmt.Println("  tackroom publish [--target NAME] [--skills a,b] [--dry-run] [--json] [--yes]")
-	fmt.Println("  tackroom mcp <list|add|import|remove> [options]   # add: --command ... or --url ... [--header 'Name: value']")
-	fmt.Println("  tackroom restore [<backup> | latest] [--dry-run]")
-	fmt.Println("  tackroom hook list [--agents ...] [query]")
-	fmt.Println("  tackroom hook remove [--dry-run] [--agents ...] <query>")
+	for _, line := range canonicalForms {
+		fmt.Println(line)
+	}
 	fmt.Println()
 	fmt.Println("Maintenance:")
 	fmt.Println("  tackroom cron [--interval 30m|--deps|--remove]")

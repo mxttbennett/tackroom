@@ -266,7 +266,7 @@ func initHarnesses() {
 				Path:     func(home string) string { return filepath.Join(home, ".pi", "agent", "AGENTS.md") },
 				Expected: func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
 			},
-			IntegrationNote: "MCP and roles require pi-mcp-adapter and pi-subagents; Agent Plugins project through managed skills and MCP",
+			IntegrationNote: "MCP is built in since Pi 1.0 (older Pi needs pi-mcp-adapter); roles require pi-subagents; Agent Plugins project through managed skills and MCP",
 			TrailerExample:  "Co-authored-by: pi[bot] <pi[bot]@users.noreply.github.com>",
 		},
 

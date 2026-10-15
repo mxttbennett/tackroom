@@ -39,9 +39,10 @@ To pin one model for all rendered roles that have no explicit model, set `role_m
 | Cursor | YAML frontmatter | `~/.cursor/agents/<name>.md` |
 | GitHub Copilot CLI | YAML frontmatter | `~/.copilot/agents/<name>.agent.md` |
 | Grok Build | YAML frontmatter | `~/.grok/agents/<name>.md` |
+| Gemini CLI | YAML frontmatter (`kind: local`) | `~/.gemini/agents/<name>.md` |
 
 Pi role files are inert unless the `pi-subagents` package is installed. Legacy model tiers are omitted so Pi inherits its configured model; use a `pi.model` exact override when needed.
 
-Cursor, Copilot CLI and Grok Build drop the legacy model tiers too; set `cursor.model`, `copilot.model` or `grok.model` for an exact id (Cursor defaults to `inherit`). Copilot gets canonical tools mapped to its aliases (`read`, `edit`, `search`, `execute`, `web`, `agent`, `todo`); Grok keeps Claude tool names, which it resolves itself; Cursor has no per-agent tool list, so `cursor.readonly: true` is the only restriction it renders.
+Cursor, Copilot CLI, Grok Build and Gemini CLI drop the legacy model tiers too; set `cursor.model`, `copilot.model`, `grok.model` or `gemini.model` for an exact id (Cursor defaults to `inherit`; Gemini uses the session's model). Gemini gets canonical tools mapped to its built-in names (`read_file`, `replace`, `run_shell_command`, `google_web_search`, ...), or set `gemini.tools`. Copilot gets canonical tools mapped to its aliases (`read`, `edit`, `search`, `execute`, `web`, `agent`, `todo`); Grok keeps Claude tool names, which it resolves itself; Cursor has no per-agent tool list, so `cursor.readonly: true` is the only restriction it renders.
 
 Roles are regenerated on every `tackroom sync`; edit the canonical `.md`, never the rendered output.

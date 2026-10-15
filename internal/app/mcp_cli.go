@@ -21,6 +21,10 @@ func runMCP(args []string) error {
 	if len(args) == 0 {
 		return errors.New("mcp requires subcommand: list, add, import, remove")
 	}
+	if isHelpArg(args[0]) {
+		printGroupUsage("mcp")
+		return nil
+	}
 	switch args[0] {
 	case "list":
 		return runMCPList(args[1:])
@@ -249,7 +253,7 @@ func runMCPImport(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "warning: %s stores ${KEY} references for %s, not the values; %s keeps its own values\n", path, strings.Join(redacted, ", "), importAgent)
 		if len(others) > 0 {
-			fmt.Fprintf(os.Stderr, "  sync writes the literal reference into %s, which may not expand it: put the real value in their config (sync keeps it), or limit targets with --agents %s\n", strings.Join(others, ", "), importAgent)
+			fmt.Fprintf(os.Stderr, "  sync writes the ${KEY} references into %s: set those variables where the agents start, or put the real values in their configs (sync keeps them), or limit targets with --agents %s\n", strings.Join(others, ", "), importAgent)
 		}
 	}
 	fmt.Println("next: tackroom sync")

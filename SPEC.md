@@ -9,6 +9,20 @@ Status: requested 2026-10-14 for the 1.6 release before a Show HN. PR only; merg
 - **`tackroom restore`.** Without arguments it lists backups under `$XDG_STATE_HOME/tackroom/backups` (default `~/.local/state/tackroom/backups`), newest first. `tackroom restore <id|latest> [--dry-run]` puts each backed-up path back. A backed-up directory whose target is now a link (or missing) is restored as a whole, so nothing is written through a link into the shared repo. The original of a file wins over numbered intermediate copies. Whatever is replaced is moved into a new backup first, so `restore latest` undoes a restore. Paths already identical are skipped.
 - **Docs.** README table gains Gemini CLI; Pi's MCP column is native (`pi-mcp-adapter` only for older Pi); remote MCP and restore documented.
 
+## End-to-end findings fixed in this PR
+
+A tester run (Gemini 4 Argon through OpenCode, sandboxed home, real agent CLIs for `mcp list`) found:
+
+- `setup` imported a remote server's literal `Authorization` header into `tackroom.yaml`; it now redacts headers like `mcp import` does and refuses a url with a literal secret in its query.
+- `sync --json` printed `materialized ...` progress on stdout; progress goes to stderr.
+- A header Codex cannot read from the environment failed `sync` halfway through the agents; config validation now rejects it before anything is written.
+- `restore` treated an identical link as a change; identical links are skipped.
+- A hook for every agent showed `hooks unsupported` under agents without hooks; only hooks that name the agent get that notice. The hook YAML is documented in the README.
+- `status` still said Pi needs `pi-mcp-adapter` for MCP; docs listed Gemini CLI in fewer places than the README.
+- `mcp|skill|hook|config --help` exited 1; they print the group's forms. `restore --help` shows its arguments.
+
+Not fixed here: `doctor --e2e --json` prints text (a maintainer tool), and `doctor` reads host-level herdr state.
+
 ## Not changed
 
 - Claude Code keeps `~/.claude/CLAUDE.md` linked to the shared `AGENTS.md`. Claude Code reads `AGENTS.md` only as project instructions; its user-level file is still `~/.claude/CLAUDE.md` (https://code.claude.com/docs/en/memory#agents-md).

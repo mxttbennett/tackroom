@@ -32,6 +32,10 @@ func runHookCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New("hook requires subcommand: list or remove")
 	}
+	if isHelpArg(args[0]) {
+		printGroupUsage("hook")
+		return nil
+	}
 	switch args[0] {
 	case "list":
 		opts, err := parseHookCommandFlags("hook list", args[1:], false)

@@ -52,8 +52,12 @@ func augmentHookReport(report *agentReport, agent agentConfig, cfg config, home 
 		return nil
 	}
 	if !supported {
+		// A hook for every agent simply skips agents without hooks; only a
+		// hook that names this agent is worth a notice.
 		for _, hook := range hooks {
-			report.UnsupportedHook = append(report.UnsupportedHook, hook.Name)
+			if len(hook.Agents) > 0 {
+				report.UnsupportedHook = append(report.UnsupportedHook, hook.Name)
+			}
 		}
 		return nil
 	}
