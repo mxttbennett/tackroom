@@ -1,31 +1,21 @@
-# SPEC: external skill sources as a separate step
+# SPEC: v1.6 — Gemini CLI, remote MCP servers, restore
 
-Status: requested 2026-10-13 as P2 after the first-run retest (finding N9). Setup stays as it is; adding third-party skill sets is its own command. PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
+Status: requested 2026-10-14 for the 1.6 release before a Show HN. PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
 
 ## Behavior
 
-- **`tackroom skill sources`** lists the sources in `tackroom.yaml` (pin, skill count, excluded agents) and the ones installed outside tackroom: Claude Code plugins that ship skills (resolved through `known_marketplaces.json` and each marketplace's `marketplace.json`) and `npx skills` installs (`$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json`). Each outside source gets a ready `add` command. `--json` prints both lists. No network.
-- **`tackroom skill sources search <query>`** queries the skills.sh search API, groups hits by GitHub repo with summed installs, and marks repos already in `tackroom.yaml` or installed elsewhere.
-- **`tackroom skill sources add <owner/repo[/path] | GitHub tree URL | git URL>`** clones the repo blob-less into the external cache and pins the newest commit at least 3 days old on the default branch (`--branch`, `--latest`). It finds skill directories (hidden directories and nested skills skipped), takes `--skills a,b`, `--all`, or a numbered pick on a terminal, and fails with the list otherwise. It writes one `external_skills` entry (`skill_dirs` from the picked skills' parents, `skills` allowlist unless `--all`, `materialize: true`) and a lock pin, then syncs unless `--no-sync`. It refuses a source already configured, and refuses to overwrite a different `~/.agents/skills/<name>` or a skill another source owns; an identical copy is adopted. A config write is rolled back if the lock write fails.
-- **Claude Code plugins.** When the repo (and path) is an installed Claude Code plugin and Claude is enabled, the entry gets `exclude_agents: [claude]`, and `add` says so.
-- **Config.** `external_skills` entries take an optional `name` (the cache directory, lock entry and `skill update` argument; default the repo basename) and `exclude_agents`. Two repos with the same basename need distinct names; `add` uses `<owner>-<repo>`. Names cannot contain path separators.
-- **Doctor.** agnix findings inside skills a lock entry materialized are ignored like findings in `external/` clones, since that content is upstream's and the external audit covers it.
-- **N9.** The generated `tackroom.yaml` comment points at `tackroom skill sources add`.
+- **Gemini CLI target (`gemini`).** Detected by the `gemini` binary. Skills: Gemini CLI reads `~/.agents/skills` itself, so tackroom mirrors into `~/.gemini/skills` only when the config root is not `~/.agents`. MCP servers and hooks go to `~/.gemini/settings.json` (`mcpServers`; `hooks` with events mapped: UserPromptSubmit→BeforeAgent, Stop→AfterAgent, PreToolUse→BeforeTool, PostToolUse→AfterTool, PreCompact→PreCompress; SessionStart, SessionEnd and Notification as is; timeouts in milliseconds). Roles render to `~/.gemini/agents/<name>.md` as local subagents (`kind: local`, Gemini tool names). Root instructions link `~/.gemini/GEMINI.md` to the shared `AGENTS.md`. Other settings in the file stay.
+- **Remote MCP servers.** A server has either `command` (stdio) or `url` (streamable HTTP) with optional `headers`; config validation enforces that. `tackroom mcp add NAME --url URL [--header 'Name: value']`. Rendered for Claude Code (`"type": "http"`), Codex (`url`, `bearer_token_env_var` for `Authorization: Bearer ${X}`, `env_http_headers` for a header that is exactly `${X}`, `http_headers` for literals; any other reference is an error naming the fix), Pi (native `~/.pi/agent/mcp.json`), Grok Build (`url`, `headers`), Cursor (`url`, `headers`, references as `${env:X}`) and Gemini CLI (`httpUrl`, `headers`). Other agents skip remote servers; `mcp add` says which. A header that references a variable is satisfied by any non-empty native value and never replaces one. `mcp import` reads remote entries and turns secret-looking headers into `${SERVER_HEADER}` references. SSE and per-agent OAuth settings are out of scope until requested.
+- **`tackroom restore`.** Without arguments it lists backups under `$XDG_STATE_HOME/tackroom/backups` (default `~/.local/state/tackroom/backups`), newest first. `tackroom restore <id|latest> [--dry-run]` puts each backed-up path back. A backed-up directory whose target is now a link (or missing) is restored as a whole, so nothing is written through a link into the shared repo. The original of a file wins over numbered intermediate copies. Whatever is replaced is moved into a new backup first, so `restore latest` undoes a restore. Paths already identical are skipped.
+- **Docs.** README table gains Gemini CLI; Pi's MCP column is native (`pi-mcp-adapter` only for older Pi); remote MCP and restore documented.
 
-## Out of scope
+## Not changed
 
-- A curated catalog compiled into the binary; discovery uses skills.sh.
-- Installing plugins' hooks, commands or MCP servers; only skills are added.
-- Removing a source (`tackroom.yaml` edit plus `sync` covers it).
-- `--all` following skills into directories upstream adds later.
-- Locking `tackroom.yaml` against a concurrent `sync`; `add` re-reads both files right before writing and writes the lock first.
+- Claude Code keeps `~/.claude/CLAUDE.md` linked to the shared `AGENTS.md`. Claude Code reads `AGENTS.md` only as project instructions; its user-level file is still `~/.claude/CLAUDE.md` (https://code.claude.com/docs/en/memory#agents-md).
 
 ## Acceptance tests
 
-- `add` of a local repo with a 10-day-old and a fresh commit pins the old one, materializes only the picked skills from it, links them for Claude and Codex, and a second `add` of the same repo fails. `--latest --all` pins the head, owns every visible skill and writes no allowlist.
-- Without `--skills`/`--all` and no terminal, `add` fails listing the skills; on a terminal `1, tdd` picks two.
-- A differing `~/.agents/skills/grill` stops `add` and leaves `tackroom.yaml` untouched; an identical one is adopted.
-- `exclude_agents: [claude]` removes the source's links from Claude and keeps Codex; `status` is clean.
-- Detection resolves URL and path plugin sources, skips plugins without skills, groups `npx skills` entries by repo, and ignores non-GitHub ones.
-- Search groups registry hits by repo and drops non-repo sources.
-- `go test ./...` passes; a sandbox run adds obra/superpowers (Claude excluded), mattpocock/skills, anthropics/skills (as `anthropics-skills`) and cursor/plugins/pstack, and `doctor` passes.
+- Gemini end to end: role, MCP, hooks (AfterAgent, ms timeout, Notification), GEMINI.md link, no skill mirror under `~/.agents`, mirror elsewhere, second sync changes nothing, status clean.
+- A remote server patched into each of the six formats contains the expected keys, no command, inspects as synced and imports back. A real `Bearer` value survives a `${VAR}` reference for Claude Code, Codex, Grok and Pi. OpenCode gets only stdio servers. Codex rejects a header it cannot read from the environment with an actionable error.
+- Restore: dry run changes nothing; restore brings back a file, a skill directory over a link (shared copy untouched) and the original of a numbered file; `restore latest` brings the replaced state back; unknown ids are refused.
+- `go test ./...` passes.

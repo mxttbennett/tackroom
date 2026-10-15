@@ -60,7 +60,11 @@ func runMCPList(args []string) error {
 			status = "enabled"
 		}
 		fmt.Printf("- %s (%s)\n", server.Name, status)
-		fmt.Printf("  command: %s\n", server.Command)
+		if server.URL != "" {
+			fmt.Printf("  url: %s\n", server.URL)
+		} else {
+			fmt.Printf("  command: %s\n", server.Command)
+		}
 		if len(server.Args) > 0 {
 			fmt.Printf("  args: %s\n", strings.Join(server.Args, " "))
 		}
@@ -73,6 +77,14 @@ func runMCPList(args []string) error {
 			sort.Strings(keys)
 			fmt.Printf("  env: %s\n", strings.Join(keys, ", "))
 		}
+		if len(server.Headers) > 0 {
+			keys := make([]string, 0, len(server.Headers))
+			for key := range server.Headers {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			fmt.Printf("  headers: %s\n", strings.Join(keys, ", "))
+		}
 	}
 	return nil
 }
@@ -82,11 +94,14 @@ func runMCPAdd(args []string) error {
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", "", "Path to tackroom YAML config")
 	command := fs.String("command", "", "MCP stdio command")
+	url := fs.String("url", "", "Remote (streamable HTTP) MCP server URL, instead of --command")
 	agentsCSV := fs.String("agents", "", "Comma-separated target agents")
 	var mcpArgs stringListFlag
 	var envs stringListFlag
+	var headerFlags stringListFlag
 	fs.Var(&mcpArgs, "arg", "MCP command argument (repeatable)")
 	fs.Var(&envs, "env", "MCP environment KEY=VALUE (repeatable)")
+	fs.Var(&headerFlags, "header", "Remote server header 'Name: value' (repeatable); use ${VAR} for secrets")
 	name := ""
 	parseArgs := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -99,14 +114,14 @@ func runMCPAdd(args []string) error {
 	if name == "" && fs.NArg() == 1 {
 		name = fs.Arg(0)
 	} else if fs.NArg() != 0 {
-		return errors.New("usage: tackroom mcp add <name> --command <cmd> [--arg value ...] [--env KEY=VALUE ...]")
+		return errors.New("usage: tackroom mcp add <name> (--command <cmd> [--arg value ...] [--env KEY=VALUE ...] | --url <url> [--header 'Name: value' ...])")
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("MCP name cannot be empty")
 	}
-	if strings.TrimSpace(*command) == "" {
-		return errors.New("--command cannot be empty")
+	if (strings.TrimSpace(*command) == "") == (strings.TrimSpace(*url) == "") {
+		return errors.New("pass either --command (stdio server) or --url (remote server)")
 	}
 	cfg, path, err := loadEditableMCPConfig(*configPath)
 	if err != nil {
@@ -120,7 +135,11 @@ func runMCPAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	server := mcpServerConfig{Name: name, Enabled: true, Command: strings.TrimSpace(*command), Args: []string(mcpArgs), Env: env, Agents: targetAgents}
+	headers, err := parseMCPHeaderFlags(headerFlags)
+	if err != nil {
+		return err
+	}
+	server := mcpServerConfig{Name: name, Enabled: true, Command: strings.TrimSpace(*command), Args: []string(mcpArgs), Env: env, URL: strings.TrimSpace(*url), Headers: headers, Agents: targetAgents}
 	if err := upsertCanonicalMCPServer(&cfg, server); err != nil {
 		return err
 	}
@@ -128,10 +147,26 @@ func runMCPAdd(args []string) error {
 		return err
 	}
 	fmt.Printf("added MCP server %s for %s\n", name, strings.Join(targetAgents, ", "))
+	if server.URL != "" {
+		var skipped []string
+		for _, agent := range targetAgents {
+			if !hasRemoteMCPSupport(agent) {
+				skipped = append(skipped, agent)
+			}
+		}
+		if len(skipped) > 0 {
+			fmt.Fprintf(os.Stderr, "note: remote servers are not written for %s yet; open an issue if you need one\n", strings.Join(skipped, ", "))
+		}
+	}
 	var literal []string
 	for key, value := range env {
 		if !isEnvReference(value) {
 			literal = append(literal, key)
+		}
+	}
+	for key, value := range headers {
+		if !hasEnvReference(value) && strings.EqualFold(key, "Authorization") {
+			literal = append(literal, "header "+key)
 		}
 	}
 	if len(literal) > 0 {
@@ -194,6 +229,7 @@ func runMCPImport(args []string) error {
 			redacted = append(redacted, key)
 		}
 	}
+	server.Headers, redacted = redactImportedMCPHeaders(server.Name, server.Headers, redacted)
 	sort.Strings(redacted)
 	server.Env = redactImportedMCPEnv(server.Env)
 	server.Agents = targetAgents
@@ -352,6 +388,21 @@ func validateConfiguredMCPAgent(cfg config, name string) error {
 	return nil
 }
 
+func parseMCPHeaderFlags(flags []string) (map[string]string, error) {
+	if len(flags) == 0 {
+		return nil, nil
+	}
+	headers := make(map[string]string, len(flags))
+	for _, item := range flags {
+		name, value, ok := strings.Cut(item, ":")
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("invalid --header %q, expected 'Name: value'", item)
+		}
+		headers[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	}
+	return headers, nil
+}
+
 func parseMCPEnvFlags(flags []string) (map[string]string, error) {
 	if len(flags) == 0 {
 		return nil, nil
@@ -365,6 +416,33 @@ func parseMCPEnvFlags(flags []string) (map[string]string, error) {
 		env[strings.TrimSpace(parts[0])] = parts[1]
 	}
 	return env, nil
+}
+
+// redactImportedMCPHeaders replaces secret-looking header values with ${VAR}
+// references (Authorization keeps its scheme) and turns Cursor's ${env:VAR}
+// into ${VAR}. It appends the redacted header names to redacted.
+func redactImportedMCPHeaders(server string, headers map[string]string, redacted []string) (map[string]string, []string) {
+	if len(headers) == 0 {
+		return headers, redacted
+	}
+	out := make(map[string]string, len(headers))
+	for key, value := range headers {
+		value = strings.ReplaceAll(value, "${env:", "${")
+		lower := strings.ToLower(key)
+		sensitive := lower == "authorization" || strings.Contains(lower, "token") || strings.Contains(lower, "key") || strings.Contains(lower, "secret") || strings.Contains(lower, "cookie")
+		if !sensitive || hasEnvReference(value) {
+			out[key] = value
+			continue
+		}
+		envName := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(server + "_" + key))
+		if scheme, _, ok := strings.Cut(value, " "); ok && lower == "authorization" {
+			out[key] = scheme + " ${" + envName + "}"
+		} else {
+			out[key] = "${" + envName + "}"
+		}
+		redacted = append(redacted, "header "+key)
+	}
+	return out, redacted
 }
 
 func redactImportedMCPEnv(env map[string]string) map[string]string {
@@ -404,8 +482,8 @@ func upsertCanonicalMCPServer(cfg *config, server mcpServerConfig) error {
 	if strings.TrimSpace(server.Name) == "" {
 		return errors.New("MCP server name cannot be empty")
 	}
-	if strings.TrimSpace(server.Command) == "" {
-		return errors.New("MCP command cannot be empty")
+	if err := validateMCPTransport(server); err != nil {
+		return err
 	}
 	for i := range cfg.MCPServers {
 		if cfg.MCPServers[i].Name == server.Name {

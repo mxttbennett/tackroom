@@ -220,6 +220,8 @@ func run(args []string) error {
 		return runView(args[1:])
 	case "skill":
 		return runSkillCommand(args[1:])
+	case "restore":
+		return runRestore(args[1:])
 	case "publish":
 		return runPublishCommand(args[1:])
 	case "mcp":
@@ -511,6 +513,7 @@ func printUsage() {
 	fmt.Println("  sync     Regenerate committed artifacts and reconcile harnesses")
 	fmt.Println("  doctor   Check pins, dependencies, and local health")
 	fmt.Println("  config   Validate or print the canonical YAML")
+	fmt.Println("  restore  List backups or put backed-up native files back")
 	fmt.Println("  view     Author the canonical YAML in a loopback web UI (browser)")
 	fmt.Println()
 	fmt.Println("Command groups:")
@@ -541,7 +544,8 @@ func printAllUsage() {
 	fmt.Println("  tackroom skill update [name ...]")
 	fmt.Println("  tackroom skill promote <name-or-path> [--dry-run]")
 	fmt.Println("  tackroom publish [--target NAME] [--skills a,b] [--dry-run] [--json] [--yes]")
-	fmt.Println("  tackroom mcp <list|add|import|remove> [options]")
+	fmt.Println("  tackroom mcp <list|add|import|remove> [options]   # add: --command ... or --url ... [--header 'Name: value']")
+	fmt.Println("  tackroom restore [<backup> | latest] [--dry-run]")
 	fmt.Println("  tackroom hook list [--agents ...] [query]")
 	fmt.Println("  tackroom hook remove [--dry-run] [--agents ...] <query>")
 	fmt.Println()

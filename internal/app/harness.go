@@ -128,6 +128,7 @@ func initHarnesses() {
 				read:       readClaudeMCPServer,
 				rootKey:    "mcpServers",
 				defaults:   map[string]interface{}{"type": "stdio"},
+				remote:     &remoteMCP{urlKey: "url", fields: map[string]interface{}{"type": "http"}},
 			}),
 			roles: roleRenderer(agentClaudeCode),
 			Hooks: &hookTarget{
@@ -156,6 +157,7 @@ func initHarnesses() {
 				patch:      patchCodexMCPServer,
 				remove:     removeCodexMCPServer,
 				read:       readCodexMCPServer,
+				remote:     &remoteMCP{urlKey: "url", codexHeaders: true},
 			}),
 			roles: roleRenderer("codex"),
 			Hooks: &hookTarget{
@@ -257,6 +259,7 @@ func initHarnesses() {
 				remove:     removeJSONMCPServer,
 				read:       readJSONMCPServer,
 				rootKey:    "mcpServers",
+				remote:     &remoteMCP{urlKey: "url"},
 			}),
 			roles: roleRenderer(agentPi),
 			RootInstructions: &rootInstructionsCapability{
@@ -309,6 +312,32 @@ func initHarnesses() {
 			IntegrationNote: "config-driven via ~/.qwen/settings.json -> skills.directories",
 		},
 
+		agentGemini: {
+			Skills:           skillsSymlink,
+			SkillsNativeRoot: readsAgentsSkillsRoot,
+			MCP: mcpTargetPtr(mcpTarget{
+				agentName:  agentGemini,
+				configPath: geminiSettingsPath,
+				inspect:    inspectJSONMCPServer,
+				patch:      patchJSONMCPServer,
+				remove:     removeJSONMCPServer,
+				read:       readJSONMCPServer,
+				rootKey:    "mcpServers",
+				remote:     &remoteMCP{urlKey: "httpUrl"},
+			}),
+			roles: roleRenderer(agentGemini),
+			Hooks: &hookTarget{
+				agentName: agentGemini,
+				inspect:   inspectGeminiHook,
+				patch:     patchGeminiHook,
+			},
+			RootInstructions: &rootInstructionsCapability{
+				Path:     func(home string) string { return filepath.Join(home, ".gemini", "GEMINI.md") },
+				Expected: func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
+			},
+			IntegrationNote: "skills read natively from ~/.agents/skills; MCP servers and hooks go to ~/.gemini/settings.json",
+		},
+
 		agentCursor: {
 			Skills:           skillsSymlink,
 			SkillsNativeRoot: readsAgentsSkillsRoot,
@@ -320,6 +349,7 @@ func initHarnesses() {
 				remove:     removeJSONMCPServer,
 				read:       readJSONMCPServer,
 				rootKey:    "mcpServers",
+				remote:     &remoteMCP{urlKey: "url", envRef: func(name string) string { return "${env:" + name + "}" }},
 			}),
 			roles: roleRenderer(agentCursor),
 			Hooks: &hookTarget{
@@ -366,6 +396,7 @@ func initHarnesses() {
 				patch:      patchCodexMCPServer,
 				remove:     removeCodexMCPServer,
 				read:       readCodexMCPServer,
+				remote:     &remoteMCP{urlKey: "url"},
 			}),
 			roles: roleRenderer(agentGrok),
 			Hooks: &hookTarget{
@@ -459,6 +490,13 @@ func hookTargetForHarness(agentName string) (hookTarget, bool) {
 }
 
 // hasMCPSupport returns true if the agent has MCP support registered.
+// hasRemoteMCPSupport reports whether tackroom renders remote (url) MCP
+// servers for the agent. Others skip them until someone asks.
+func hasRemoteMCPSupport(agentName string) bool {
+	target, err := mcpTargetForHarness(agentName)
+	return err == nil && target.remote != nil
+}
+
 func hasMCPSupport(agentName string) bool {
 	h := harnessFor(agentName)
 	return h != nil && h.MCP != nil

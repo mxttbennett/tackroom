@@ -14,6 +14,7 @@ type newHarnessCase struct {
 	rootLink                           string
 	mcpWant, hookWant                  []string
 	preexisting                        map[string]string
+	takesNotification                  bool // the harness has a Notification hook event
 }
 
 func newHarnessCases(home string) []newHarnessCase {
@@ -50,6 +51,20 @@ func newHarnessCases(home string) []newHarnessCase {
 			preexisting: map[string]string{
 				filepath.Join(home, ".grok", "config.toml"): "model = \"grok-4.6\"\n",
 			},
+			takesNotification: true,
+		},
+		{
+			name: agentGemini, detect: "gemini", skillRoot: "~/.gemini/skills", agentRoot: "~/.gemini/agents",
+			roleFile: filepath.Join(home, ".gemini", "agents", "reviewer.md"),
+			mcpFile:  filepath.Join(home, ".gemini", "settings.json"),
+			hookFile: filepath.Join(home, ".gemini", "settings.json"),
+			rootLink: filepath.Join(home, ".gemini", "GEMINI.md"),
+			mcpWant:  []string{`"mcpServers"`, `"local"`, `"command": "local-mcp"`, `"theme": "GitHub"`},
+			hookWant: []string{`"AfterAgent"`, `"type": "command"`, `"command": "~/.agents/memory/hooks/stop.sh"`, `"timeout": 15000`, `"Notification"`},
+			preexisting: map[string]string{
+				filepath.Join(home, ".gemini", "settings.json"): `{"ui":{"theme":"GitHub"}}`,
+			},
+			takesNotification: true,
 		},
 	}
 }
@@ -118,7 +133,7 @@ func TestNewHarnessesSyncEndToEnd(t *testing.T) {
 			assertFileContains(t, c.mcpFile, c.mcpWant)
 			assertFileContains(t, c.hookFile, c.hookWant)
 			hooks, _ := os.ReadFile(c.hookFile)
-			if strings.Contains(string(hooks), "notify.sh") && c.name != agentGrok {
+			if strings.Contains(string(hooks), "notify.sh") && !c.takesNotification {
 				t.Fatalf("%s: unsupported Notification hook was written:\n%s", c.name, hooks)
 			}
 			if strings.HasSuffix(c.hookFile, ".json") {
@@ -159,13 +174,13 @@ func TestNewHarnessesSyncEndToEnd(t *testing.T) {
 			}
 			r := reports[0]
 			wantHooks := 1
-			if c.name == agentGrok {
-				wantHooks = 2 // Grok takes Claude Code event names as is, Notification included
+			if c.takesNotification {
+				wantHooks = 2
 			}
 			if !r.Synced || len(r.ManagedMCP) != 1 || len(r.ManagedHook) != wantHooks || len(r.ManagedAgent) != 1 {
 				t.Fatalf("after sync: synced=%v mcp=%v hooks=%v roles=%v unsupported=%v", r.Synced, r.ManagedMCP, r.ManagedHook, r.ManagedAgent, r.UnsupportedHook)
 			}
-			if c.name != agentGrok && (len(r.UnsupportedHook) != 1 || r.UnsupportedHook[0] != "notify") {
+			if !c.takesNotification && (len(r.UnsupportedHook) != 1 || r.UnsupportedHook[0] != "notify") {
 				t.Fatalf("Notification should be reported unsupported for %s: %v", c.name, r.UnsupportedHook)
 			}
 		})

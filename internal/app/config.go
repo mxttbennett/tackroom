@@ -219,8 +219,8 @@ func validateConfig(cfg *config, home string, expand bool) error {
 		if cfg.MCPServers[i].Name == "" {
 			return errors.New("config MCP server name cannot be empty")
 		}
-		if strings.TrimSpace(cfg.MCPServers[i].Command) == "" {
-			return fmt.Errorf("config MCP server %s is missing command", cfg.MCPServers[i].Name)
+		if err := validateMCPTransport(cfg.MCPServers[i]); err != nil {
+			return err
 		}
 		if _, ok := seenMCP[cfg.MCPServers[i].Name]; ok {
 			return fmt.Errorf("config MCP server %s is duplicated", cfg.MCPServers[i].Name)
@@ -506,6 +506,26 @@ func expandPath(path string, home string) string {
 // configs and CLI arguments keep working.
 var legacyAgentNames = map[string]string{
 	"claude-code": agentClaudeCode,
+}
+
+// validateMCPTransport requires exactly one of command (stdio) or url
+// (streamable HTTP), with only the fields that transport uses.
+func validateMCPTransport(server mcpServerConfig) error {
+	command := strings.TrimSpace(server.Command)
+	url := strings.TrimSpace(server.URL)
+	switch {
+	case command == "" && url == "":
+		return fmt.Errorf("config MCP server %s needs a command (stdio) or a url (remote)", server.Name)
+	case command != "" && url != "":
+		return fmt.Errorf("config MCP server %s sets both command and url; keep one", server.Name)
+	case url != "" && !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://"):
+		return fmt.Errorf("config MCP server %s url must start with http:// or https://", server.Name)
+	case url != "" && (len(server.Args) > 0 || len(server.Env) > 0):
+		return fmt.Errorf("config MCP server %s: args and env are for stdio servers; a remote server takes headers", server.Name)
+	case command != "" && len(server.Headers) > 0:
+		return fmt.Errorf("config MCP server %s: headers are for remote (url) servers", server.Name)
+	}
+	return nil
 }
 
 func normalizeAgentName(name string) string {

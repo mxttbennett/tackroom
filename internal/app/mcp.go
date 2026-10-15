@@ -18,9 +18,12 @@ import (
 type mcpServerConfig struct {
 	Name    string            `yaml:"name"`
 	Enabled bool              `yaml:"enabled"`
-	Command string            `yaml:"command"`
+	Command string            `yaml:"command,omitempty"`
 	Args    []string          `yaml:"args,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty"`
+	// URL makes this a remote (streamable HTTP) server instead of a stdio one.
+	URL     string            `yaml:"url,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 	Agents  []string          `yaml:"agents"`
 }
 
@@ -36,6 +39,7 @@ type mcpTarget struct {
 	// (OpenClaw keeps servers under "mcp" -> "servers").
 	parentKey string
 	defaults  map[string]interface{}
+	remote    *remoteMCP
 }
 
 const yamlMapTag = "!!map"
@@ -45,6 +49,9 @@ func desiredMCPServersForAgent(cfg config, agentName string) []mcpServerConfig {
 	agentName = normalizeAgentName(agentName)
 	for _, server := range cfg.MCPServers {
 		if !server.Enabled {
+			continue
+		}
+		if server.URL != "" && !hasRemoteMCPSupport(agentName) {
 			continue
 		}
 		if len(server.Agents) == 0 {
@@ -209,7 +216,7 @@ func inspectJSONMCPServer(target mcpTarget, server mcpServerConfig, home string)
 	if err := parseJSONConfig(configPath, data, &raw); err != nil {
 		return stateMissing, fmt.Errorf("parse %s: %w", configPath, err)
 	}
-	return inspectMapMCPServer(jsonMCPParent(raw, target), target.rootKey, server, target.defaults), nil
+	return inspectMapMCPServer(jsonMCPParent(raw, target), target, server), nil
 }
 
 // jsonMCPParent returns the object that holds target.rootKey: the document
@@ -246,7 +253,7 @@ func patchJSONMCPServer(target mcpTarget, server mcpServerConfig, home string) e
 		parent = jsonMCPParent(raw, target)
 		raw[target.parentKey] = parent
 	}
-	upsertMapMCPServer(parent, target.rootKey, server, target.defaults)
+	upsertMapMCPServer(parent, target, server)
 
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
@@ -357,7 +364,7 @@ func inspectYAMLMCPServer(target mcpTarget, server mcpServerConfig, home string)
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return stateMissing, fmt.Errorf("parse %s: %w", configPath, err)
 	}
-	return inspectMapMCPServer(raw, target.rootKey, server, target.defaults), nil
+	return inspectMapMCPServer(raw, target, server), nil
 }
 
 func patchYAMLMCPServer(target mcpTarget, server mcpServerConfig, home string) error {
@@ -405,8 +412,8 @@ func readYAMLMCPServer(target mcpTarget, name string, home string) (mcpServerCon
 	return mcpServerFromMap(name, entry)
 }
 
-func inspectMapMCPServer(raw map[string]interface{}, rootKey string, server mcpServerConfig, defaults map[string]interface{}) string {
-	serversRaw, ok := raw[rootKey]
+func inspectMapMCPServer(raw map[string]interface{}, target mcpTarget, server mcpServerConfig) string {
+	serversRaw, ok := raw[target.rootKey]
 	if !ok {
 		return stateMissing
 	}
@@ -422,7 +429,7 @@ func inspectMapMCPServer(raw map[string]interface{}, rootKey string, server mcpS
 	if !ok {
 		return stateDrifted
 	}
-	if !matchManagedMCPMap(entry, server, defaults) {
+	if !matchManagedMCPMap(entry, server, target) {
 		return stateDrifted
 	}
 	return stateSynced
@@ -494,17 +501,17 @@ func canonicalPath(path string) string {
 	return path
 }
 
-func upsertMapMCPServer(raw map[string]interface{}, rootKey string, server mcpServerConfig, defaults map[string]interface{}) {
-	serversMap, _ := asMap(raw[rootKey])
+func upsertMapMCPServer(raw map[string]interface{}, target mcpTarget, server mcpServerConfig) {
+	serversMap, _ := asMap(raw[target.rootKey])
 	if serversMap == nil {
 		serversMap = map[string]interface{}{}
-		raw[rootKey] = serversMap
+		raw[target.rootKey] = serversMap
 	}
 	entry, _ := asMap(serversMap[server.Name])
 	if entry == nil {
 		entry = map[string]interface{}{}
 	}
-	applyManagedMCPMap(entry, server, defaults)
+	applyManagedMCPMap(entry, server, target)
 	serversMap[server.Name] = entry
 }
 
@@ -750,6 +757,12 @@ func inspectCodexMCPServer(target mcpTarget, server mcpServerConfig, home string
 	if !ok {
 		return stateMissing, nil
 	}
+	if server.URL != "" {
+		if target.remote == nil || !matchRemoteTOMLEntry(entry, server, target.remote.codexHeaders) {
+			return stateDrifted, nil
+		}
+		return stateSynced, nil
+	}
 	command, _ := entry["command"].(string)
 	args, _ := toStringSlice(entry["args"])
 	if command != server.Command || !stringSlicesEqual(args, server.Args) || !envSatisfied(server.Env, tomlEntryEnv(entry)) {
@@ -773,9 +786,17 @@ func patchCodexMCPServer(target mcpTarget, server mcpServerConfig, home string) 
 			return err
 		}
 		server.Env = mergeManagedEnv(tomlEntryEnv(entry), server.Env)
+		if server.URL != "" {
+			server = keepNativeRemoteSecrets(server, entry, target.remote.codexHeaders)
+		}
 	}
 	header := fmt.Sprintf("[mcp_servers.%s]", server.Name)
 	section := renderCodexMCPSection(server)
+	if server.URL != "" {
+		if section, err = renderRemoteTOMLSection(server, target.remote.codexHeaders); err != nil {
+			return err
+		}
+	}
 	updated := upsertTOMLSectionIncludingDescendants(content, header, section)
 	if updated == content {
 		return nil
@@ -801,6 +822,13 @@ func readCodexMCPServer(target mcpTarget, name string, home string) (mcpServerCo
 	}
 	if !ok {
 		return mcpServerConfig{}, fmt.Errorf("MCP server %q not found in %s", name, target.agentName)
+	}
+	if url, _ := entry["url"].(string); strings.TrimSpace(url) != "" {
+		headers := stringMapValue(entry["headers"])
+		if headers == nil {
+			headers = stringMapValue(entry["http_headers"])
+		}
+		return mcpServerConfig{Name: name, Enabled: true, URL: url, Headers: headers}, nil
 	}
 	command, _ := entry["command"].(string)
 	if strings.TrimSpace(command) == "" {
@@ -1181,8 +1209,11 @@ func stripTOMLInlineComments(raw string) string {
 	return out.String()
 }
 
-func matchManagedMCPMap(entry map[string]interface{}, server mcpServerConfig, defaults map[string]interface{}) bool {
-	if err := validateNativeDefaults(mcpTarget{defaults: defaults}, entry); err != nil {
+func matchManagedMCPMap(entry map[string]interface{}, server mcpServerConfig, target mcpTarget) bool {
+	if server.URL != "" {
+		return matchRemoteMCPMap(entry, server, target.remote)
+	}
+	if err := validateNativeDefaults(target, entry); err != nil {
 		return false
 	}
 	command, _ := entry["command"].(string)
@@ -1252,7 +1283,15 @@ func mergeManagedEnv(native map[string]string, canonical map[string]string) map[
 	return merged
 }
 
-func applyManagedMCPMap(entry map[string]interface{}, server mcpServerConfig, defaults map[string]interface{}) {
+func applyManagedMCPMap(entry map[string]interface{}, server mcpServerConfig, target mcpTarget) {
+	if server.URL != "" && target.remote != nil {
+		applyRemoteMCPMap(entry, server, target.remote)
+		return
+	}
+	if target.remote != nil {
+		delete(entry, target.remote.urlKey)
+	}
+	defaults := target.defaults
 	entry["command"] = server.Command
 	args := make([]interface{}, 0, len(server.Args))
 	for _, arg := range server.Args {
@@ -1278,6 +1317,9 @@ func applyManagedMCPMap(entry map[string]interface{}, server mcpServerConfig, de
 }
 
 func mcpServerFromMap(name string, entry map[string]interface{}) (mcpServerConfig, error) {
+	if remote, ok := remoteFromMap(name, entry); ok {
+		return remote, nil
+	}
 	command, _ := entry["command"].(string)
 	if strings.TrimSpace(command) == "" {
 		return mcpServerConfig{}, fmt.Errorf("MCP server %q has no stdio command", name)
@@ -1305,6 +1347,9 @@ func mcpServerFromMap(name string, entry map[string]interface{}) (mcpServerConfi
 }
 
 func validateNativeDefaults(target mcpTarget, entry map[string]interface{}) error {
+	if _, isRemote := remoteFromMap("", entry); isRemote && target.remote != nil {
+		return nil // stdio defaults (Claude's "type": "stdio") don't apply
+	}
 	for key, expected := range target.defaults {
 		actual, ok := entry[key]
 		if !ok && key == "disabled" && expected == false {
