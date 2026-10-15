@@ -1,6 +1,6 @@
 ---
 name: tackroom
-description: Set up, inspect, and sync a private user-owned agent configuration across Claude Code, Codex, Cursor, GitHub Copilot CLI, Grok Build, OpenClaw, DeepSeek Harness (dsh), Hermes, Droid, OpenCode, Qwen Code, Pi, and OMP. Use for tackroom setup, status, sync, doctor, skill, MCP, hook, role, memory-tier, or config-root workflows.
+description: Set up, inspect, and sync a private user-owned agent configuration across Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot CLI, Grok Build, OpenClaw, DeepSeek Harness (dsh), Hermes, Droid, OpenCode, Qwen Code, Pi, and OMP. Use for tackroom setup, status, sync, doctor, skill, MCP, hook, role, memory-tier, or config-root workflows.
 ---
 
 # tackroom
@@ -35,6 +35,7 @@ tackroom skill update [name ...]
 tackroom skill promote <name-or-path> [--dry-run]
 tackroom publish [--target NAME] [--skills a,b] [--dry-run] [--json] [--yes]
 tackroom mcp <list|add|import|remove> [options]
+tackroom restore [<backup> | latest] [--dry-run]
 ```
 
 `sync` prints the skills, agents, MCP servers, hooks, packages and plugins the run changed (harnesses with identical changes grouped), a table with one row per harness, and every managed item per harness, with long lists wrapped to the terminal. `status` stays compact; `--verbose` adds the full lists. Both drop escape codes when output is not a terminal and color when `NO_COLOR` is set.
@@ -111,7 +112,7 @@ Missing, drifted, conflicting, stale managed, and unrelated external entries are
 
 Reconciles only configured managed entries. Unrelated native content remains untouched.
 
-For symlink-based harnesses, skills point to canonical directories under `~/.agents/skills`. Hermes uses `skills.external_dirs: ["~/.agents/skills"]`; Qwen Code uses `skills.directories: ["~/.agents/skills"]`. Both consume the canonical tree without creating a duplicate mirror. OpenCode, Cursor, GitHub Copilot CLI, Grok Build, OpenClaw and DeepSeek Harness read `~/.agents/skills` themselves; tackroom mirrors into their skill roots only when the config root is elsewhere.
+For symlink-based harnesses, skills point to canonical directories under `~/.agents/skills`. Hermes uses `skills.external_dirs: ["~/.agents/skills"]`; Qwen Code uses `skills.directories: ["~/.agents/skills"]`. Both consume the canonical tree without creating a duplicate mirror. OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, Grok Build, OpenClaw and DeepSeek Harness read `~/.agents/skills` themselves; tackroom mirrors into their skill roots only when the config root is elsewhere.
 
 Agent roles are canonical Markdown files under `~/.agents/agents/` and render to:
 
@@ -125,8 +126,9 @@ Agent roles are canonical Markdown files under `~/.agents/agents/` and render to
 - Cursor: `~/.cursor/agents/<name>.md`
 - GitHub Copilot CLI: `~/.copilot/agents/<name>.agent.md`
 - Grok Build: `~/.grok/agents/<name>.md`
+- Gemini CLI: `~/.gemini/agents/<name>.md` (local subagents)
 
-Pi always has managed skills. With `pi-subagents` installed, tackroom renders canonical roles into Pi's user agent directory. With `pi-mcp-adapter` installed, it patches canonical and Agent Plugin MCP entries into `~/.pi/agent/mcp.json`. Put pinned package sources under the Pi target's `packages` list to make `sync` reconcile `~/.pi/agent/settings.json`; Pi installs missing declared packages at startup. Tackroom does not install the Pi executable. The role and MCP files remain inert when their packages are absent. OMP is a separate target.
+Pi always has managed skills. With `pi-subagents` installed, tackroom renders canonical roles into Pi's user agent directory. It patches canonical and Agent Plugin MCP entries into `~/.pi/agent/mcp.json`, which Pi 1.0 and later read natively (older Pi needs `pi-mcp-adapter`). Put pinned package sources under the Pi target's `packages` list to make `sync` reconcile `~/.pi/agent/settings.json`; Pi installs missing declared packages at startup. Tackroom does not install the Pi executable. The role files remain inert without `pi-subagents`. OMP is a separate target.
 
 For MCP servers, sync patches only named canonical entries and preserves unrelated native servers. A server sync wrote earlier and that is no longer wanted for an agent (removed from `tackroom.yaml`, disabled, or dropped from its `agents`) shows as `mcp stale` in `status` and is removed by the next `sync`, after the native config file is copied to `~/.local/state/tackroom/backups/<time>/`. Sync never claims an entry the agent already had; `mcp remove` also claims native entries that still match the definition it removes. Import redacts literal environment values to `${KEY}` references and names the redacted keys; the source agent keeps its values. Other target agents get the literal `${KEY}`, which they may not expand: put the real value in their native config (sync never replaces a value with a reference) or import with `--agents <source>`. List output never prints values.
 
@@ -172,6 +174,7 @@ publish_targets:
 ```bash
 tackroom mcp list
 tackroom mcp add local --command uvx --arg pkg@1.2.3 --env KEY=value
+tackroom mcp add docs --url https://mcp.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'  # remote: Claude Code, Codex, Pi, Grok, Cursor, Gemini CLI
 tackroom mcp import claude local --agents=codex,hermes,droid,pi,omp
 tackroom sync
 tackroom mcp remove local
@@ -211,12 +214,13 @@ Legacy HarnessKit flags on `view` (`--port`, `--host`, `--no-token`) are rejecte
 | Factory Droid | yes | yes | yes | yes |
 | Hermes | yes, config-driven | no | yes | yes |
 | OpenCode | yes | yes | yes | no |
-| Pi | yes | yes, via `pi-subagents` | yes, via `pi-mcp-adapter` | no |
+| Pi | yes | yes, via `pi-subagents` | yes, native since Pi 1.0 | no |
 | OMP | yes | yes | yes | no |
 | Qwen Code | yes, config-driven | yes | yes | yes |
 | Cursor | yes | yes | yes, `~/.cursor/mcp.json` | yes, `~/.cursor/hooks.json` |
 | GitHub Copilot CLI | yes | yes | yes, `~/.copilot/mcp-config.json` | yes, `~/.copilot/hooks/tackroom.json` |
 | Grok Build | yes | yes | yes, `~/.grok/config.toml` | yes, `~/.grok/hooks/tackroom.json` |
+| Gemini CLI | yes | yes | yes, `~/.gemini/settings.json` | yes, `~/.gemini/settings.json` |
 | OpenClaw | yes | no | yes, `~/.openclaw/openclaw.json` `mcp.servers` | no |
 | DeepSeek Harness | yes | no | yes, `tackroom-mcp-*` rows in `~/.dsh/cordis.patch.yml` | no |
 

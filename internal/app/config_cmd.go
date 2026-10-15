@@ -31,6 +31,10 @@ func runConfigCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New("config requires a subcommand: validate or print (edit the config with `tackroom view`)")
 	}
+	if isHelpArg(args[0]) {
+		printGroupUsage("config")
+		return nil
+	}
 	switch args[0] {
 	case "validate":
 		opts, err := parseConfigFlags(args[1:])

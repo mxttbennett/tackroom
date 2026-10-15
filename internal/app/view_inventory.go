@@ -165,7 +165,11 @@ func assembleInventory(cfg config, reports []agentReport, skills map[string]skil
 	}
 
 	for _, server := range cfg.MCPServers {
-		row := viewWired{Name: server.Name, Enabled: server.Enabled, Command: server.Command, Explicit: len(server.Agents) > 0, Targets: append([]string{}, server.Agents...), States: map[string]string{}}
+		command := server.Command
+		if server.URL != "" {
+			command = server.URL // a remote server shows its endpoint
+		}
+		row := viewWired{Name: server.Name, Enabled: server.Enabled, Command: command, Explicit: len(server.Agents) > 0, Targets: append([]string{}, server.Agents...), States: map[string]string{}}
 		for _, agent := range columns {
 			report := byName[agent]
 			targeted := len(server.Agents) == 0 || stringInSlice(normalizeAgentName(agent), server.Agents)

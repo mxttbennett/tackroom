@@ -163,7 +163,7 @@ func TestRootHelpAdvertisesCanonicalDescriptiveFamilies(t *testing.T) {
 		}
 		families = append(families, fields[0])
 	}
-	if got, want := strings.Join(families, ","), "setup,status,sync,doctor,config,view,skill,publish,mcp,hook"; got != want {
+	if got, want := strings.Join(families, ","), "setup,status,sync,doctor,config,restore,view,skill,publish,mcp,hook"; got != want {
 		t.Fatalf("short-help families = %q, want %q:\n%s", got, want, stdout)
 	}
 	if !strings.Contains(stdout, `Run "tackroom help --all" for flags and maintenance commands.`) {

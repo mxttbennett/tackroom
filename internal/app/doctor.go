@@ -29,6 +29,7 @@ const (
 	agentOMP                = "omp"
 	agentQwenCode           = "qwen-code"
 	agentCursor             = "cursor"
+	agentGemini             = "gemini"
 	agentCopilot            = "copilot"
 	agentGrok               = "grok"
 	agentOpenClaw           = "openclaw"

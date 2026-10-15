@@ -32,6 +32,10 @@ func runHookCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New("hook requires subcommand: list or remove")
 	}
+	if isHelpArg(args[0]) {
+		printGroupUsage("hook")
+		return nil
+	}
 	switch args[0] {
 	case "list":
 		opts, err := parseHookCommandFlags("hook list", args[1:], false)
@@ -172,6 +176,8 @@ func nativeHookConfigPaths(agent string, home string) ([]string, bool, bool) {
 		return []string{filepath.Join(home, ".hermes", "config.yaml")}, true, true
 	case agentQwenCode:
 		return []string{qwenSettingsPath(home)}, false, true
+	case agentGemini:
+		return []string{geminiSettingsPath(home)}, false, true
 	case agentCursor:
 		return []string{cursorHooksConfigPath(home)}, true, true
 	case agentCopilot:
@@ -253,6 +259,8 @@ func nativeHookIsManaged(entry nativeHookEntry, cfg config) bool {
 			event, ok = hermesHookEvent(event)
 		case agentCursor:
 			event, ok = cursorHookEvent(event)
+		case agentGemini:
+			event, ok = geminiHookEvent(event)
 		default:
 			ok = true
 		}

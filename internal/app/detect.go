@@ -301,7 +301,7 @@ func hashBytes(data []byte) string {
 }
 
 func hashMCPServer(server mcpServerConfig) string {
-	parts := []string{server.Command}
+	parts := []string{server.Command, server.URL}
 	parts = append(parts, server.Args...)
 	return hashBytes([]byte(strings.Join(parts, "\x00")))
 }

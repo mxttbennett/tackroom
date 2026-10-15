@@ -163,6 +163,7 @@ func defaultAgentConfigs() []agentConfig {
 		{Name: agentPi, Enabled: true, SkillRoot: "~/.pi/agent/skills", AgentRoot: "~/.pi/agent/agents", Detect: "pi"},
 		{Name: agentQwenCode, Enabled: true, SkillRoot: "~/.qwen/skills", AgentRoot: "~/.qwen/agents", Detect: "qwen"},
 		{Name: agentCursor, Enabled: true, SkillRoot: "~/.cursor/skills", AgentRoot: "~/.cursor/agents", Detect: "cursor-agent"},
+		{Name: agentGemini, Enabled: true, SkillRoot: "~/.gemini/skills", AgentRoot: "~/.gemini/agents", Detect: "gemini"},
 		{Name: agentCopilot, Enabled: true, SkillRoot: "~/.copilot/skills", AgentRoot: "~/.copilot/agents", Detect: "copilot"},
 		{Name: agentGrok, Enabled: true, SkillRoot: "~/.grok/skills", AgentRoot: "~/.grok/agents", Detect: "grok"},
 		{Name: agentOpenClaw, Enabled: true, SkillRoot: "~/.openclaw/skills", Detect: "openclaw"},
@@ -504,10 +505,11 @@ func scanNativeMCP(agent agentConfig, cfg config, home string) ([]nativeMCPCandi
 			continue
 		}
 		server.Enabled = true
-		if importedMCPInvocationHasLiteralSecret(server.Command, server.Args) {
-			return nil, fmt.Errorf("native MCP server %q for %s has a literal secret in command arguments; move the secret to an environment variable before import", name, agent.Name)
+		if importedMCPInvocationHasLiteralSecret(server.Command, server.Args) || importedMCPInvocationHasLiteralSecret(server.URL, nil) {
+			return nil, fmt.Errorf("native MCP server %q for %s has a literal secret in its command arguments or url; move the secret to an environment variable before import", name, agent.Name)
 		}
 		server.Env = redactImportedMCPEnv(server.Env)
+		server.Headers, _ = redactImportedMCPHeaders(server.Name, server.Headers, nil)
 		out = append(out, nativeMCPCandidate{nativeImportCandidate: nativeImportCandidate{Name: name, Origin: agent.Name, Path: name}, Server: server})
 	}
 	return out, nil

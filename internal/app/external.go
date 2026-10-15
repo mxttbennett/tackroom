@@ -608,9 +608,10 @@ func applyMaterializedSkills(plan []materializedSkill) error {
 			change.Backup = ""
 		}
 		if change.Skill.Remove {
-			fmt.Printf("removed stale materialized skill %s\n", change.Skill.Name)
+			fmt.Fprintf(os.Stderr, "removed stale materialized skill %s\n", change.Skill.Name)
 		} else {
-			fmt.Printf("materialized %s -> %s\n", change.Skill.SourcePath, change.Skill.TargetPath)
+			// stderr: sync --json owns stdout.
+			fmt.Fprintf(os.Stderr, "materialized %s -> %s\n", change.Skill.SourcePath, change.Skill.TargetPath)
 		}
 	}
 	return nil
