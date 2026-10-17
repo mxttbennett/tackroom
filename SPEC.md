@@ -1,35 +1,22 @@
-# SPEC: v1.6 — Gemini CLI, remote MCP servers, restore
+# SPEC: session hooks for Pi and OMP
 
-Status: requested 2026-10-14 for the 1.6 release before a Show HN. PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
+Status: requested 2026-10-17. PR only; merge needs separate approval. Earlier specs are in git history (`git log -- SPEC.md`).
+
+## Problem
+
+Pi and OMP had no managed hook surface, so memory hooks (the AgentsView recent-sessions context at session start) reached Claude Code, Codex, Droid and Hermes but not them. Both run hooks as TypeScript extension modules, not shell commands: Pi loads `~/.pi/agent/extensions/*.ts` (Pi 1.0 `docs/extensions.md`), OMP loads `~/.omp/agent/hooks/{pre,post}/*.ts` (https://omp.sh/docs/hooks).
 
 ## Behavior
 
-- **Gemini CLI target (`gemini`).** Detected by the `gemini` binary. Skills: Gemini CLI reads `~/.agents/skills` itself, so tackroom mirrors into `~/.gemini/skills` only when the config root is not `~/.agents`. MCP servers and hooks go to `~/.gemini/settings.json` (`mcpServers`; `hooks` with events mapped: UserPromptSubmit→BeforeAgent, Stop→AfterAgent, PreToolUse→BeforeTool, PostToolUse→AfterTool, PreCompact→PreCompress; SessionStart, SessionEnd and Notification as is; timeouts in milliseconds). Roles render to `~/.gemini/agents/<name>.md` as local subagents (`kind: local`, Gemini tool names). Root instructions link `~/.gemini/GEMINI.md` to the shared `AGENTS.md`. Other settings in the file stay.
-- **Remote MCP servers.** A server has either `command` (stdio) or `url` (streamable HTTP) with optional `headers`; config validation enforces that. `tackroom mcp add NAME --url URL [--header 'Name: value']`. Rendered for Claude Code (`"type": "http"`), Codex (`url`, `bearer_token_env_var` for `Authorization: Bearer ${X}`, `env_http_headers` for a header that is exactly `${X}`, `http_headers` for literals; any other reference is an error naming the fix), Pi (native `~/.pi/agent/mcp.json`), Grok Build (`url`, `headers`), Cursor (`url`, `headers`, references as `${env:X}`) and Gemini CLI (`httpUrl`, `headers`). Other agents skip remote servers; `mcp add` says which. A header that references a variable is satisfied by any non-empty native value and never replaces one. `mcp import` reads remote entries and turns secret-looking headers into `${SERVER_HEADER}` references. SSE and per-agent OAuth settings are out of scope until requested.
-- **`tackroom restore`.** Without arguments it lists backups under `$XDG_STATE_HOME/tackroom/backups` (default `~/.local/state/tackroom/backups`), newest first. `tackroom restore <id|latest> [--dry-run]` puts each backed-up path back. A backed-up directory whose target is now a link (or missing) is restored as a whole, so nothing is written through a link into the shared repo. The original of a file wins over numbered intermediate copies. Whatever is replaced is moved into a new backup first, so `restore latest` undoes a restore. Paths already identical are skipped.
-- **Docs.** README table gains Gemini CLI; Pi's MCP column is native (`pi-mcp-adapter` only for older Pi); remote MCP and restore documented.
+- **One generated module per hook.** `tackroom sync` writes `~/.pi/agent/extensions/tackroom-<name>.ts` and `~/.omp/agent/hooks/post/tackroom-<name>.ts` from an embedded template (`internal/app/extension_hook.ts`). The module runs the hook command with `/bin/sh -c`, a Claude Code-style JSON payload (`hook_event_name`, `cwd`, `agent`) on stdin and the configured timeout (default 60 s, Claude Code's default).
+- **Events.** `SessionStart` maps to `session_start`; its `hookSpecificOutput.additionalContext` is returned from `before_agent_start` as a hidden custom message, which both harnesses send to the model with the next prompt. `SessionEnd` maps to `session_shutdown`. `Stop`, `PreToolUse`, `PostToolUse` and `UserPromptSubmit` need block or continue semantics the module does not reproduce and are reported as unsupported.
+- **Status.** A module is synced when its bytes match the render, drifted otherwise (rewritten by sync), missing when absent.
+- **`tackroom hook list` / `remove`** read the command and event back from generated modules; removing one deletes the file.
+- **Docs.** README table and footnote, site matrix and Pi note.
 
-## End-to-end findings fixed in this PR
+## Verification
 
-A tester run (Gemini 4 Argon through OpenCode, sandboxed home, real agent CLIs for `mcp list`) found:
-
-- `setup` imported a remote server's literal `Authorization` header into `tackroom.yaml`; it now redacts headers like `mcp import` does and refuses a url with a literal secret in its query.
-- `sync --json` printed `materialized ...` progress on stdout; progress goes to stderr.
-- A header Codex cannot read from the environment failed `sync` halfway through the agents; config validation now rejects it before anything is written.
-- `restore` treated an identical link as a change; identical links are skipped.
-- A hook for every agent showed `hooks unsupported` under agents without hooks; only hooks that name the agent get that notice. The hook YAML is documented in the README.
-- `status` still said Pi needs `pi-mcp-adapter` for MCP; docs listed Gemini CLI in fewer places than the README.
-- `mcp|skill|hook|config --help` exited 1; they print the group's forms. `restore --help` shows its arguments.
-
-Not fixed here: `doctor --e2e --json` prints text (a maintainer tool), and `doctor` reads host-level herdr state.
-
-## Not changed
-
-- Claude Code keeps `~/.claude/CLAUDE.md` linked to the shared `AGENTS.md`. Claude Code reads `AGENTS.md` only as project instructions; its user-level file is still `~/.claude/CLAUDE.md` (https://code.claude.com/docs/en/memory#agents-md).
-
-## Acceptance tests
-
-- Gemini end to end: role, MCP, hooks (AfterAgent, ms timeout, Notification), GEMINI.md link, no skill mirror under `~/.agents`, mirror elsewhere, second sync changes nothing, status clean.
-- A remote server patched into each of the six formats contains the expected keys, no command, inspects as synced and imports back. A real `Bearer` value survives a `${VAR}` reference for Claude Code, Codex, Grok and Pi. OpenCode gets only stdio servers. Codex rejects a header it cannot read from the environment with an actionable error.
-- Restore: dry run changes nothing; restore brings back a file, a skill directory over a link (shared copy untouched) and the original of a numbered file; `restore latest` brings the replaced state back; unknown ids are refused.
+- Unit tests: render, write, synced, drifted on a timeout change, list as managed, remove; unsupported events; default timeout and safe file names.
+- OMP 18.8.3, live: `omp -p --hook <generated module>` ran the hook (payload logged with `agent: "omp"`), injected the canary as a `tackroom-hook` custom message, and the model answered with the canary word, in both text and JSON mode.
+- Pi 1.0.0: the module loaded, ran the hook and injected the custom message (JSON trace). The model reply could not be checked: every `openai-codex` model on this machine fails with "not supported when using Codex with a ChatGPT account". Pi's `docs/message-types.md` says custom message content is sent to the model as a user message.
 - `go test ./...` passes.

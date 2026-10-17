@@ -55,8 +55,8 @@ Five surfaces, each rendered into the harness's own format — tackroom does not
 | Hermes | yes | -- | yes | yes | -- |
 | OpenCode | yes† | yes | yes | -- | -- |
 | Qwen Code | yes, config-driven | yes | yes | yes | skills + MCP§ |
-| OMP (pi fork) | yes | yes | yes | --‡ | -- |
-| Pi* | yes | yes* | yes | -- | skills + MCP* |
+| OMP (pi fork) | yes | yes | yes | session‡ | -- |
+| Pi* | yes | yes* | yes | session‡ | skills + MCP* |
 
 \* Vanilla [pi](https://github.com/earendil-works/pi) gains managed roles through `pi-subagents`. Pi 1.0 and later read MCP servers from `~/.pi/agent/mcp.json` natively; older versions need `pi-mcp-adapter`, which also projects Agent Plugins (and replaces the built-in MCP support when installed). A Pi target can also declare a pinned `packages` list; `sync` writes that list to `~/.pi/agent/settings.json`, and Pi installs missing packages on its next startup. Tackroom does not install the Pi executable itself. The OMP fork remains a separate target.
 
@@ -74,7 +74,7 @@ agents:
 † OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, Grok Build, OpenClaw and DeepSeek Harness read `~/.agents/skills/` natively, so tackroom mirrors skills into their own skill roots only when the config root is not `~/.agents` (or, for OpenClaw, when `$OPENCLAW_STATE_DIR` is set). OpenCode's only hook surface is a JS plugin API.
 Gemini CLI MCP servers and hooks go to `~/.gemini/settings.json` (hook events renamed to Gemini's, timeouts in milliseconds), roles to `~/.gemini/agents/`, and root instructions link to `~/.gemini/GEMINI.md`. Gemini CLI parses a hook's stdout as JSON, so a hook should print JSON or nothing.
 ¶ Cursor hooks go to `~/.cursor/hooks.json` with Cursor's event names. If Cursor's third-party configs setting is on, Cursor also runs Claude Code's hooks, so a hook synced to both runs twice there.
-‡ OMP has no managed hook surface yet; register memory hooks manually if needed.
+‡ Pi and OMP run hooks as TypeScript extension modules, so tackroom writes one generated module per hook (`~/.pi/agent/extensions/tackroom-<name>.ts`, `~/.omp/agent/hooks/post/tackroom-<name>.ts`) that pipes a Claude Code-style JSON payload to the command. Only `SessionStart` (its `additionalContext` reaches the model with the next prompt) and `SessionEnd` map; `Stop` and the tool events need block-and-continue semantics the module does not reproduce, so they are reported as unsupported.
 § Qwen Code natively loads Agent Plugins v1 skills and MCP servers; tackroom manages those same surfaces without rewriting the plugin.
 ‖ Claude Code plugins load in place from a directory marketplace at the config root; see [Claude Code plugins](#claude-code-plugins).
 ⁑ Amp's hook and role surfaces use plugin-based models incompatible with tackroom' script-based hooks and per-agent role files.

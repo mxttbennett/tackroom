@@ -53,6 +53,8 @@ func inventoryFixtureReports() []agentReport {
 			Managed:        []string{"alpha", "beta", "gamma", "delta"},
 			External:       []string{"foreign-skill"},
 			DriftedMCP:     []string{"everywhere"},
+			// Pi runs hooks through extension modules, which have no Stop event.
+			UnsupportedHook: []string{"on-stop"},
 		},
 		{Name: "droid", Detected: false},
 		{Name: "hermes", Detected: true, Error: "parse config.yaml: line 4"},
