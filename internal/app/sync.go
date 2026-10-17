@@ -239,6 +239,8 @@ func applyAgentRootInstructionSync(reports []agentReport) error {
 				return fmt.Errorf("create %s: %w", filepath.Dir(report.RootPath), err)
 			}
 		case stateDrifted:
+			// Removing first means a write never follows an old link into
+			// AGENTS.md itself.
 			if err := os.Remove(report.RootPath); err != nil {
 				return fmt.Errorf("remove %s before relink: %w", report.RootPath, err)
 			}
@@ -246,6 +248,13 @@ func applyAgentRootInstructionSync(reports []agentReport) error {
 			return fmt.Errorf("%s is not a symlink", report.RootPath)
 		default:
 			return fmt.Errorf("unsupported root instruction state %q for %s", report.RootState, report.Name)
+		}
+		if report.RootContent != nil {
+			// 0600: a copy of a private source must not be readable by others.
+			if err := os.WriteFile(report.RootPath, report.RootContent, 0o600); err != nil {
+				return fmt.Errorf("write %s: %w", report.RootPath, err)
+			}
+			continue
 		}
 		if err := os.Symlink(report.RootExpected, report.RootPath); err != nil {
 			return fmt.Errorf("symlink %s -> %s: %w", report.RootPath, report.RootExpected, err)

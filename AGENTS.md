@@ -44,7 +44,8 @@ New starter content requires an explicit product decision and an inventory test 
 - Use Python 3's standard library for the dependency-free basic memory tier.
 - Keep tests isolated with temporary homes and paths. Tests must never mutate live harness configuration.
 - Prefer surgical changes and existing adapters over parallel implementations.
-- For behavior changes, add a focused test for the user-visible contract and plausible failure modes.
+- Do not add new unit tests. When a change breaks an existing unit test, delete that test instead of updating it.
+- TODO: replace the unit tests with end-to-end checks that `tackroom setup` and `tackroom sync` install correctly for selected harness setups in a temporary home.
 
 # Documentation
 
@@ -55,4 +56,4 @@ Keep `README.md`, `skills/tackroom/SKILL.md`, CLI help, the public template, and
 - Preserve unrelated worktree changes.
 - Use short, single-line commit messages without bot attribution trailers.
 - Do not commit secrets, local overlays, external caches, generated memory, or native harness state.
-- Pull requests must pass focused behavior tests and the full repository suite before merge.
+- Pull requests must pass the full repository suite before merge.

@@ -26,7 +26,7 @@ func rootInstructionSources(repoRoot string, detected []agentConfig, home string
 	var sources []rootInstructionSource
 	for _, agent := range detected {
 		h := harnessFor(agent.Name)
-		if h == nil || h.RootInstructions == nil {
+		if h == nil || h.RootInstructions == nil || h.RootInstructions.NoSetupImport {
 			continue
 		}
 		path := h.RootInstructions.Path(home)
@@ -40,7 +40,7 @@ func rootInstructionSources(repoRoot string, detected []agentConfig, home string
 			continue
 		}
 		data, err := os.ReadFile(path)
-		if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		if err != nil || len(bytes.TrimSpace(data)) == 0 || bytes.HasPrefix(data, []byte(generatedRootMarker)) {
 			continue
 		}
 		duplicate := false

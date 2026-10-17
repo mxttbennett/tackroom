@@ -23,10 +23,18 @@ const (
 	skillsConfigDriven
 )
 
-// rootInstructionsCapability describes a root instructions symlink the agent needs.
+// rootInstructionsCapability describes the agent's root instructions file:
+// a symlink to AGENTS.md, or, when the config lists instructions, a file
+// tackroom composes from AGENTS.md and those files.
 type rootInstructionsCapability struct {
 	Path     func(home string) string     // symlink path, e.g. ~/.factory/AGENTS.md
 	Expected func(repoRoot string) string // target path, e.g. <config-root>/AGENTS.md
+	// Imports means the agent expands `@path` lines, so the composed file
+	// imports its sources instead of copying them and stays live.
+	Imports bool
+	// NoSetupImport keeps setup from importing this file into a new
+	// AGENTS.md, for files that agents seed with their own defaults.
+	NoSetupImport bool
 }
 
 // doctorCheck is a named health check contributed by a harness.
@@ -139,6 +147,7 @@ func initHarnesses() {
 			RootInstructions: &rootInstructionsCapability{
 				Path:     func(home string) string { return filepath.Join(home, ".claude", "CLAUDE.md") },
 				Expected: func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
+				Imports:  true,
 			},
 			doctorChecks: []doctorCheck{
 				{Name: "claude plugins", Run: func(repoRoot, _ string, cfg config) checkResult {
@@ -219,6 +228,13 @@ func initHarnesses() {
 				inspect:   inspectHermesHook,
 				patch:     patchHermesHook,
 			},
+			// Hermes has no global AGENTS.md; SOUL.md in HERMES_HOME is its
+			// one always-loaded file. Hermes seeds a default there.
+			RootInstructions: &rootInstructionsCapability{
+				Path:          func(home string) string { return filepath.Join(home, ".hermes", "SOUL.md") },
+				Expected:      func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
+				NoSetupImport: true,
+			},
 			IntegrationNote: "config-driven via ~/.hermes/config.yaml -> skills.external_dirs",
 			doctorChecks: []doctorCheck{
 				{Name: "hermes direct mirrors", Run: checkHermesDirectMirrors},
@@ -284,6 +300,12 @@ func initHarnesses() {
 			}),
 			roles: roleRenderer(agentOMP),
 			Hooks: extensionHookTarget(agentOMP, ompExtensionHookDir),
+			// OMP falls back to ~/.agents/AGENTS.md; its own file wins when
+			// present, so composed instructions and other config roots land here.
+			RootInstructions: &rootInstructionsCapability{
+				Path:     func(home string) string { return filepath.Join(home, ".omp", "agent", "AGENTS.md") },
+				Expected: func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
+			},
 		},
 
 		agentQwenCode: {
