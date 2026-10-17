@@ -285,17 +285,6 @@ func TestRestoreSkipsALinkThatAlreadyPointsTheSamePlace(t *testing.T) {
 	}
 }
 
-func TestHooksForEveryAgentSkipAgentsWithoutHooksQuietly(t *testing.T) {
-	cfg := config{Hooks: []hookConfig{{Name: "all", Enabled: true, Event: "Stop", Command: "x"}, {Name: "named", Enabled: true, Event: "Stop", Command: "y", Agents: []string{agentPi}}}}
-	var report agentReport
-	if err := augmentHookReport(&report, agentConfig{Name: agentPi}, cfg, t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(report.UnsupportedHook, ",") != "named" {
-		t.Fatalf("only a hook naming pi is worth a notice, got %v", report.UnsupportedHook)
-	}
-}
-
 func TestGroupHelpExitsZero(t *testing.T) {
 	for _, group := range []string{"mcp", "skill", "hook", "config"} {
 		stdout, _, err := captureCLIOutput(t, func() error { return Run([]string{group, "--help"}) })

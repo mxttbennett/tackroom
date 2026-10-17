@@ -278,6 +278,7 @@ func initHarnesses() {
 				remote:     &remoteMCP{urlKey: "url"},
 			}),
 			roles: roleRenderer(agentPi),
+			Hooks: extensionHookTarget(agentPi, piExtensionHookDir),
 			RootInstructions: &rootInstructionsCapability{
 				Path:     func(home string) string { return filepath.Join(home, ".pi", "agent", "AGENTS.md") },
 				Expected: func(repoRoot string) string { return filepath.Join(repoRoot, "AGENTS.md") },
@@ -298,6 +299,7 @@ func initHarnesses() {
 				rootKey:    "mcpServers",
 			}),
 			roles: roleRenderer(agentOMP),
+			Hooks: extensionHookTarget(agentOMP, ompExtensionHookDir),
 			// OMP falls back to ~/.agents/AGENTS.md; its own file wins when
 			// present, so composed instructions and other config roots land here.
 			RootInstructions: &rootInstructionsCapability{

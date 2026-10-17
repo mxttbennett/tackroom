@@ -136,9 +136,12 @@ func collectNativeHooks(home string, cfg config, selected []agentConfig) ([]nati
 			seenPaths[key] = true
 			var found []nativeHookEntry
 			var err error
-			if simple {
+			switch {
+			case name == agentPi || name == agentOMP:
+				found, err = readExtensionHook(name, path)
+			case simple:
 				found, err = readSimpleNativeHooks(name, path)
-			} else {
+			default:
 				found, err = readGroupedNativeHooks(name, path)
 			}
 			if err != nil {
@@ -184,6 +187,10 @@ func nativeHookConfigPaths(agent string, home string) ([]string, bool, bool) {
 		return hookDirFiles(filepath.Dir(copilotHooksConfigPath(home))), true, true
 	case agentGrok:
 		return hookDirFiles(filepath.Dir(grokHooksConfigPath(home))), false, true
+	case agentPi:
+		return extensionHookFiles(piExtensionHookDir(home)), false, true
+	case agentOMP:
+		return extensionHookFiles(ompExtensionHookDir(home)), false, true
 	default:
 		return nil, false, false
 	}
@@ -327,9 +334,14 @@ func removeNativeHookEntries(entries []nativeHookEntry) (int, error) {
 	for path, pathEntries := range byPath {
 		var didChange bool
 		var err error
-		if agent := agentByPath[path]; agent == agentHermes || agent == agentCursor || agent == agentCopilot {
+		switch agent := agentByPath[path]; agent {
+		case agentPi, agentOMP:
+			// One generated module per hook: removing the hook removes the file.
+			err = os.Remove(path)
+			didChange = err == nil
+		case agentHermes, agentCursor, agentCopilot:
 			didChange, err = removeSimpleNativeHookEntries(path, pathEntries)
-		} else {
+		default:
 			didChange, err = removeGroupedNativeHookEntries(path, pathEntries)
 		}
 		if err != nil {
