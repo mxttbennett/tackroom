@@ -130,7 +130,7 @@ func inspectQwenAgent(agent agentConfig, expected map[string]string, agentsSkill
 		return agentReport{}, err
 	}
 	if h := harnessFor(agent.Name); h != nil && h.RootInstructions != nil {
-		if err := inspectRootInstructions(&report, h.RootInstructions, filepath.Dir(agentsSkillRoot), home); err != nil {
+		if err := inspectRootInstructions(&report, h.RootInstructions, filepath.Dir(agentsSkillRoot), home, cfg.Instructions); err != nil {
 			return agentReport{}, err
 		}
 	}

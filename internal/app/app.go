@@ -18,6 +18,10 @@ type config struct {
 	PublishTargets []publishTarget       `yaml:"publish_targets,omitempty"`
 	Hooks          []hookConfig          `yaml:"hooks,omitempty"`
 	UI             *uiConfig             `yaml:"ui,omitempty"`
+	// Instructions lists extra instruction files (for example SOUL.md or a
+	// profile kept elsewhere) that every agent's root doc carries after
+	// AGENTS.md, in order. Relative paths resolve against the config root.
+	Instructions []string `yaml:"instructions,omitempty"`
 	// ContextNoteTokens is the estimated skill-listing token threshold above
 	// which `tackroom doctor` prints a soft context advisory note. Absent
 	// (nil) uses contextNoteTokensDefault; 0 (or negative) disables the note.
@@ -100,7 +104,10 @@ type agentReport struct {
 	RootExpected    string
 	RootActual      string
 	RootState       string
-	RootLinked      bool // this sync run created or repaired the root link
+	RootLinked      bool     // this sync run created or repaired the root link
+	RootSources     []string // files composed into the root doc, AGENTS.md first; empty for a plain link
+	RootContent     []byte   // the composed root doc sync writes
+	RootMissing     []string // configured instructions files that were not found
 	Managed         []string
 	ManagedAgent    []string
 	ManagedMCP      []string

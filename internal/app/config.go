@@ -62,6 +62,9 @@ func mergeConfig(base *config, overlay config) {
 	if overlay.ContextNoteTokens != nil {
 		base.ContextNoteTokens = overlay.ContextNoteTokens
 	}
+	if overlay.Instructions != nil {
+		base.Instructions = append([]string(nil), overlay.Instructions...)
+	}
 	if overlay.UI != nil {
 		copyUI := *overlay.UI
 		copyUI.Links = append([]uiLink(nil), overlay.UI.Links...)
@@ -351,6 +354,22 @@ func validateConfig(cfg *config, home string, expand bool) error {
 			}
 			seenSkills[t.Skills[j]] = struct{}{}
 		}
+	}
+
+	seenInstructions := make(map[string]struct{}, len(cfg.Instructions))
+	for i := range cfg.Instructions {
+		cfg.Instructions[i] = strings.TrimSpace(cfg.Instructions[i])
+		path := cfg.Instructions[i]
+		if path == "" {
+			return errors.New("config instructions has an empty path")
+		}
+		if filepath.Clean(path) == "AGENTS.md" {
+			return errors.New("config instructions must not list AGENTS.md; it is always first")
+		}
+		if _, ok := seenInstructions[path]; ok {
+			return fmt.Errorf("config instructions lists %q more than once", path)
+		}
+		seenInstructions[path] = struct{}{}
 	}
 
 	return nil

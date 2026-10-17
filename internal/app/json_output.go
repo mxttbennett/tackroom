@@ -18,8 +18,10 @@ type surfaceJSON struct {
 }
 
 type rootInstructionsJSON struct {
-	Path  string `json:"path"`
-	State string `json:"state"`
+	Path           string   `json:"path"`
+	State          string   `json:"state"`
+	Sources        []string `json:"sources,omitempty"`
+	MissingSources []string `json:"missing_sources,omitempty"`
 }
 
 type agentStatusJSON struct {
@@ -69,7 +71,7 @@ func buildStatusJSON(repoRoot string, repoReport repoLinkReport, reports []agent
 			Conflicts: nonNil(r.Conflicts),
 		}
 		if r.RootPath != "" {
-			agent.RootInstructions = &rootInstructionsJSON{Path: r.RootPath, State: r.RootState}
+			agent.RootInstructions = &rootInstructionsJSON{Path: r.RootPath, State: r.RootState, Sources: r.RootSources, MissingSources: r.RootMissing}
 		}
 		if r.Detected && (!r.Synced || r.Error != "") {
 			out.Synced = false

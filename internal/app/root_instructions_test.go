@@ -27,7 +27,7 @@ func TestInspectRootInstructionsUnmanagedWithoutSharedFile(t *testing.T) {
 	home := t.TempDir()
 	writeSyncTestFile(t, filepath.Join(home, ".factory", "AGENTS.md"), []byte("# Local\n"))
 	report := agentReport{}
-	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home); err != nil {
+	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home, nil); err != nil {
 		t.Fatal(err)
 	}
 	if report.RootState != "" || report.RootPath != "" || len(report.Conflicts) != 0 {
@@ -40,7 +40,7 @@ func TestInspectRootInstructionsIdenticalCopyIsRelinked(t *testing.T) {
 	writeSharedAgentsMD(t, home)
 	writeSyncTestFile(t, filepath.Join(home, ".factory", "AGENTS.md"), []byte("# Shared\n"))
 	report := agentReport{}
-	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home); err != nil {
+	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home, nil); err != nil {
 		t.Fatal(err)
 	}
 	if report.RootState != stateDrifted || len(report.Conflicts) != 0 {
@@ -53,7 +53,7 @@ func TestInspectDroidRootInstructionsMissing(t *testing.T) {
 	writeSharedAgentsMD(t, home)
 	report := agentReport{}
 
-	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home); err != nil {
+	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +83,7 @@ func TestInspectDroidRootInstructionsSynced(t *testing.T) {
 	}
 
 	report := agentReport{}
-	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home); err != nil {
+	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -104,7 +104,7 @@ func TestInspectDroidRootInstructionsConflict(t *testing.T) {
 	}
 
 	report := agentReport{}
-	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home); err != nil {
+	if err := inspectRootInstructions(&report, droidRootInstructions(), filepath.Join(home, ".agents"), home, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,7 +205,7 @@ func TestInspectClaudeAndCodexRootInstructions(t *testing.T) {
 			home := t.TempDir()
 			writeSharedAgentsMD(t, home)
 			report := agentReport{}
-			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home); err != nil {
+			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home, nil); err != nil {
 				t.Fatal(err)
 			}
 			if report.RootState != stateMissing {
@@ -229,7 +229,7 @@ func TestInspectClaudeAndCodexRootInstructions(t *testing.T) {
 				t.Fatal(err)
 			}
 			report := agentReport{}
-			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home); err != nil {
+			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home, nil); err != nil {
 				t.Fatal(err)
 			}
 			if report.RootState != stateSynced {
@@ -247,7 +247,7 @@ func TestInspectClaudeAndCodexRootInstructions(t *testing.T) {
 				t.Fatal(err)
 			}
 			report := agentReport{}
-			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home); err != nil {
+			if err := inspectRootInstructions(&report, tc.cap(), filepath.Join(home, ".agents"), home, nil); err != nil {
 				t.Fatal(err)
 			}
 			if report.RootState != stateConflict {
@@ -337,5 +337,187 @@ func TestApplyAgentRootInstructionSyncClaudeAndCodex(t *testing.T) {
 		if rawTarget != report.RootExpected {
 			t.Fatalf("%s link target = %q, want %q", tc.agent, rawTarget, report.RootExpected)
 		}
+	}
+}
+
+func rootInstructionsFor(t *testing.T, agent string) *rootInstructionsCapability {
+	t.Helper()
+	h := harnessFor(agent)
+	if h == nil || h.RootInstructions == nil {
+		t.Fatalf("%s harness missing RootInstructions", agent)
+	}
+	return h.RootInstructions
+}
+
+func TestRootInstructionsHermesAndOMPPaths(t *testing.T) {
+	home := t.TempDir()
+	if got, want := rootInstructionsFor(t, agentHermes).Path(home), filepath.Join(home, ".hermes", "SOUL.md"); got != want {
+		t.Fatalf("hermes Path = %q, want %q", got, want)
+	}
+	if got, want := rootInstructionsFor(t, agentOMP).Path(home), filepath.Join(home, ".omp", "agent", "AGENTS.md"); got != want {
+		t.Fatalf("omp Path = %q, want %q", got, want)
+	}
+}
+
+// writeInstructionSources lays out AGENTS.md and SOUL.md in the config root
+// and a profile outside it, returning the config root.
+func writeInstructionSources(t *testing.T, home string) string {
+	t.Helper()
+	repoRoot := filepath.Join(home, ".agents")
+	writeSyncTestFile(t, filepath.Join(repoRoot, "AGENTS.md"), []byte("# Shared\n"))
+	writeSyncTestFile(t, filepath.Join(repoRoot, "SOUL.md"), []byte("# Soul\n"))
+	writeSyncTestFile(t, filepath.Join(home, "vault", "USER.md"), []byte("# User\n"))
+	return repoRoot
+}
+
+func inspectRootForTest(t *testing.T, agent string, repoRoot string, home string, instructions []string) agentReport {
+	t.Helper()
+	report := agentReport{Name: agent, Detected: true}
+	if err := inspectRootInstructions(&report, rootInstructionsFor(t, agent), repoRoot, home, instructions); err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func TestComposedRootInstructionsCopyLifecycle(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := writeInstructionSources(t, home)
+	instructions := []string{"SOUL.md", "~/vault/USER.md", "missing.md"}
+	rootPath := filepath.Join(home, ".factory", "AGENTS.md")
+	// Start from the plain link an earlier sync made.
+	if err := os.MkdirAll(filepath.Dir(rootPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repoRoot, "AGENTS.md"), rootPath); err != nil {
+		t.Fatal(err)
+	}
+
+	report := inspectRootForTest(t, agentDroid, repoRoot, home, instructions)
+	if report.RootState != stateDrifted {
+		t.Fatalf("a plain link with instructions configured is drifted, got %q", report.RootState)
+	}
+	if len(report.RootSources) != 3 || len(report.RootMissing) != 1 {
+		t.Fatalf("sources = %v, missing = %v", report.RootSources, report.RootMissing)
+	}
+	if err := applyAgentRootInstructionSync([]agentReport{report}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<!-- Generated by tackroom from ~/.agents/AGENTS.md, ~/.agents/SOUL.md, ~/vault/USER.md; do not edit directly. Edit the sources and run `tackroom sync`. -->\n\n# Shared\n\n# Soul\n\n# User\n"
+	if string(got) != want {
+		t.Fatalf("composed file:\n%s\nwant:\n%s", got, want)
+	}
+	if shared, _ := os.ReadFile(filepath.Join(repoRoot, "AGENTS.md")); string(shared) != "# Shared\n" {
+		t.Fatalf("writing the composed file followed the old link into AGENTS.md: %q", shared)
+	}
+	if report := inspectRootForTest(t, agentDroid, repoRoot, home, instructions); report.RootState != stateSynced {
+		t.Fatalf("after sync RootState = %q, want synced", report.RootState)
+	}
+
+	writeSyncTestFile(t, filepath.Join(repoRoot, "SOUL.md"), []byte("# Soul v2\n"))
+	report = inspectRootForTest(t, agentDroid, repoRoot, home, instructions)
+	if report.RootState != stateDrifted || len(report.Conflicts) != 0 {
+		t.Fatalf("an edited source makes the copy stale, not a conflict: %+v", report)
+	}
+
+	// Dropping the instructions list turns the generated file back into a link.
+	report = inspectRootForTest(t, agentDroid, repoRoot, home, nil)
+	if report.RootState != stateDrifted || len(report.Conflicts) != 0 {
+		t.Fatalf("a generated file without instructions is drifted, got %+v", report)
+	}
+	if err := applyAgentRootInstructionSync([]agentReport{report}); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(rootPath); err != nil || target != filepath.Join(repoRoot, "AGENTS.md") {
+		t.Fatalf("root doc not relinked: %q, %v", target, err)
+	}
+}
+
+func TestComposedRootInstructionsClaudeImports(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := writeInstructionSources(t, home)
+	instructions := []string{"SOUL.md", "~/vault/USER.md"}
+	report := inspectRootForTest(t, agentClaudeCode, repoRoot, home, instructions)
+	if report.RootState != stateMissing {
+		t.Fatalf("RootState = %q, want missing", report.RootState)
+	}
+	if err := applyAgentRootInstructionSync([]agentReport{report}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<!-- Generated by tackroom from ~/.agents/AGENTS.md, ~/.agents/SOUL.md, ~/vault/USER.md; do not edit directly. Edit the sources and run `tackroom sync`. -->\n@~/.agents/AGENTS.md\n@~/.agents/SOUL.md\n@~/vault/USER.md\n"
+	if string(got) != want {
+		t.Fatalf("CLAUDE.md:\n%s\nwant:\n%s", got, want)
+	}
+	// Imports stay live: editing a source needs no sync.
+	writeSyncTestFile(t, filepath.Join(repoRoot, "SOUL.md"), []byte("# Soul v2\n"))
+	if report := inspectRootForTest(t, agentClaudeCode, repoRoot, home, instructions); report.RootState != stateSynced {
+		t.Fatalf("RootState = %q, want synced", report.RootState)
+	}
+}
+
+func TestComposedRootInstructionsUserFileConflicts(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := writeInstructionSources(t, home)
+	writeSyncTestFile(t, filepath.Join(home, ".codex", "AGENTS.md"), []byte("# Local\n"))
+	report := inspectRootForTest(t, agentCodex, repoRoot, home, []string{"SOUL.md"})
+	if report.RootState != stateConflict || len(report.Replaceable) != 1 {
+		t.Fatalf("a file the user wrote is a replaceable conflict: %+v", report)
+	}
+}
+
+func TestInspectHermesAgentWiresRootInstructions(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := writeInstructionSources(t, home)
+	agent := agentConfig{Name: agentHermes, Enabled: true, SkillRoot: filepath.Join(home, ".hermes", "skills")}
+	cfg := config{Instructions: []string{"SOUL.md"}}
+	report, err := inspectHermesAgent(agent, map[string]string{}, filepath.Join(repoRoot, "skills"), cfg, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.RootPath != filepath.Join(home, ".hermes", "SOUL.md") || report.RootState != stateMissing || len(report.RootSources) != 2 {
+		t.Fatalf("hermes root doc not inspected: %+v", report)
+	}
+}
+
+func TestRootInstructionSourcesSkipsHermesSeed(t *testing.T) {
+	home := t.TempDir()
+	repoRoot := filepath.Join(home, ".agents")
+	writeSyncTestFile(t, filepath.Join(home, ".hermes", "SOUL.md"), []byte("You are Hermes Agent.\n"))
+	writeSyncTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), []byte("# Mine\n"))
+	detected := []agentConfig{{Name: agentHermes}, {Name: agentClaudeCode}}
+	sources := rootInstructionSources(repoRoot, detected, home)
+	if len(sources) != 1 || sources[0].Agent != agentClaudeCode {
+		t.Fatalf("setup should import only Claude's file, got %+v", sources)
+	}
+}
+
+func TestConfigInstructionsValidateAndMerge(t *testing.T) {
+	cfg := config{Instructions: []string{" SOUL.md "}}
+	if err := validateConfig(&cfg, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Instructions[0] != "SOUL.md" {
+		t.Fatalf("instructions not trimmed: %q", cfg.Instructions)
+	}
+	for _, bad := range [][]string{{"AGENTS.md"}, {"SOUL.md", "SOUL.md"}, {" "}} {
+		if err := validateConfig(&config{Instructions: bad}, t.TempDir(), true); err == nil {
+			t.Fatalf("instructions %q should be rejected", bad)
+		}
+	}
+	base := config{Instructions: []string{"SOUL.md"}}
+	mergeConfig(&base, config{})
+	if len(base.Instructions) != 1 {
+		t.Fatalf("an overlay without instructions keeps the shared list: %q", base.Instructions)
+	}
+	mergeConfig(&base, config{Instructions: []string{}})
+	if len(base.Instructions) != 0 {
+		t.Fatalf("an empty overlay list clears the shared one: %q", base.Instructions)
 	}
 }

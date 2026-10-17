@@ -118,18 +118,33 @@ func repoLine(repoReport repoLinkReport) string {
 }
 
 func rootDocLine(r agentReport) string {
+	expected := r.RootExpected
+	if len(r.RootSources) > 0 {
+		// The generated file's header carries the full paths.
+		names := make([]string, len(r.RootSources))
+		for i, src := range r.RootSources {
+			names[i] = filepath.Base(src)
+		}
+		expected = strings.Join(names, " + ")
+	}
+	var skipped string
+	if len(r.RootMissing) > 0 {
+		skipped = " " + ui.Dim.Render("(skipped missing "+strings.Join(r.RootMissing, ", ")+")")
+	}
 	if r.RootState == stateSynced {
-		line := fmt.Sprintf("%s synced %s %s", ui.Mark("ok"), ui.Dim.Render("->"), r.RootExpected)
-		if r.RootLinked {
+		line := fmt.Sprintf("%s synced %s %s", ui.Mark("ok"), ui.Dim.Render("->"), expected)
+		if r.RootLinked && len(r.RootSources) > 0 {
+			line += " " + ui.Dim.Render("(written this run)")
+		} else if r.RootLinked {
 			line += " " + ui.Dim.Render("(linked this run)")
 		}
-		return line
+		return line + skipped
 	}
-	detail := fmt.Sprintf("expected %s", r.RootExpected)
+	detail := fmt.Sprintf("expected %s", expected)
 	if r.RootActual != "" {
 		detail += fmt.Sprintf(", actual %s", r.RootActual)
 	}
-	return fmt.Sprintf("%s %s (%s)", ui.Mark("fail"), r.RootState, detail)
+	return fmt.Sprintf("%s %s (%s)", ui.Mark("fail"), r.RootState, detail) + skipped
 }
 
 // sourceLines describes each external skill source, names aligned.
