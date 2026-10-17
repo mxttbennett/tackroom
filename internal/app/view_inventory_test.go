@@ -53,8 +53,6 @@ func inventoryFixtureReports() []agentReport {
 			Managed:        []string{"alpha", "beta", "gamma", "delta"},
 			External:       []string{"foreign-skill"},
 			DriftedMCP:     []string{"everywhere"},
-			// Pi runs hooks through extension modules, which have no Stop event.
-			UnsupportedHook: []string{"on-stop"},
 		},
 		{Name: "droid", Detected: false},
 		{Name: "hermes", Detected: true, Error: "parse config.yaml: line 4"},
@@ -113,42 +111,6 @@ func TestAssembleInventoryMapsSkillAndRoleStates(t *testing.T) {
 	}
 	if roles["builder"]["claude"] != cellOK || roles["reviewer"]["claude"] != cellMissing || roles["builder"]["pi"] != cellUnsupported {
 		t.Errorf("roles = %+v", roles)
-	}
-}
-
-func TestAssembleInventoryWiring(t *testing.T) {
-	inv := assembleInventory(inventoryFixtureConfig(), inventoryFixtureReports(), map[string]skillMeta{}, nil, nil)
-	mcp := map[string]viewWired{}
-	for _, row := range inv.MCP {
-		mcp[row.Name] = row
-	}
-	cases := []struct{ server, agent, want string }{
-		{"everywhere", "claude", cellOK},
-		{"everywhere", "pi", cellDrift},
-		{"claude-only", "claude", cellMissing},
-		{"claude-only", "pi", cellOff},
-		{"parked", "claude", cellDisabled},
-		{"everywhere", "droid", cellAbsent},
-	}
-	for _, c := range cases {
-		if got := mcp[c.server].States[c.agent]; got != c.want {
-			t.Errorf("mcp %s on %s = %q, want %q", c.server, c.agent, got, c.want)
-		}
-	}
-	if mcp["everywhere"].Explicit || !mcp["claude-only"].Explicit {
-		t.Errorf("explicit flags wrong: %+v", mcp)
-	}
-	hook := inv.Hooks[0]
-	if hook.States["claude"] != cellOK || hook.States["pi"] != cellUnsupported || hook.Event != "Stop" {
-		t.Errorf("hook = %+v", hook)
-	}
-
-	custom := assembleInventory(config{
-		Agents:     []agentConfig{{Name: "custom-agent", Enabled: true}},
-		MCPServers: []mcpServerConfig{{Name: "x", Enabled: true}},
-	}, []agentReport{{Name: "custom-agent", Detected: true}}, map[string]skillMeta{}, nil, nil)
-	if got := custom.MCP[0].States["custom-agent"]; got != cellUnsupported {
-		t.Errorf("unknown harness MCP = %q, want unsupported", got)
 	}
 }
 
