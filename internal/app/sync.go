@@ -250,7 +250,8 @@ func applyAgentRootInstructionSync(reports []agentReport) error {
 			return fmt.Errorf("unsupported root instruction state %q for %s", report.RootState, report.Name)
 		}
 		if report.RootContent != nil {
-			if err := os.WriteFile(report.RootPath, report.RootContent, 0o644); err != nil {
+			// 0600: a copy of a private source must not be readable by others.
+			if err := os.WriteFile(report.RootPath, report.RootContent, 0o600); err != nil {
 				return fmt.Errorf("write %s: %w", report.RootPath, err)
 			}
 			continue

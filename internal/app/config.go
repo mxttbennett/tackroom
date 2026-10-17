@@ -359,11 +359,11 @@ func validateConfig(cfg *config, home string, expand bool) error {
 	seenInstructions := make(map[string]struct{}, len(cfg.Instructions))
 	for i := range cfg.Instructions {
 		cfg.Instructions[i] = strings.TrimSpace(cfg.Instructions[i])
-		path := cfg.Instructions[i]
-		if path == "" {
+		if cfg.Instructions[i] == "" {
 			return errors.New("config instructions has an empty path")
 		}
-		if filepath.Clean(path) == "AGENTS.md" {
+		path := filepath.Clean(cfg.Instructions[i])
+		if path == "AGENTS.md" {
 			return errors.New("config instructions must not list AGENTS.md; it is always first")
 		}
 		if _, ok := seenInstructions[path]; ok {
