@@ -474,6 +474,9 @@ func TestComposedRootInstructionsUserFileConflicts(t *testing.T) {
 
 func TestInspectHermesAgentWiresRootInstructions(t *testing.T) {
 	home := t.TempDir()
+	// Hermes's skills-dir check resolves $HOME itself.
+	t.Setenv("HOME", home)
+	writeSyncTestFile(t, filepath.Join(home, ".hermes", "config.yaml"), []byte("model: {}\n"))
 	repoRoot := writeInstructionSources(t, home)
 	agent := agentConfig{Name: agentHermes, Enabled: true, SkillRoot: filepath.Join(home, ".hermes", "skills")}
 	cfg := config{Instructions: []string{"SOUL.md"}}
