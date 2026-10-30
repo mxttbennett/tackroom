@@ -26,7 +26,7 @@ import (
 // Separate assets keep the Go server small and make the browser surface easy to
 // review without introducing a JavaScript build or runtime dependency.
 //
-//go:embed web/index.html web/style.css web/app.js
+//go:embed web/index.html web/style.css web/app.js web/fonts
 var configWebAssets embed.FS
 
 type configWebServer struct {
@@ -253,6 +253,10 @@ func (s *configWebServer) handler() http.Handler {
 		case "/api/crons":
 			s.handleCrons(w, r)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/fonts/") && strings.HasSuffix(r.URL.Path, ".woff2") && !strings.Contains(r.URL.Path[len("/fonts/"):], "/") {
+				s.handleAsset(w, r)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})
@@ -303,9 +307,12 @@ func (s *configWebServer) handleAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if name == "style.css" {
+	switch {
+	case name == "style.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	} else {
+	case strings.HasSuffix(name, ".woff2"):
+		w.Header().Set("Content-Type", "font/woff2")
+	default:
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	}
 	_, _ = w.Write(data)

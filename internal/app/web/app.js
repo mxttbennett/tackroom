@@ -2,7 +2,7 @@ const VIEWS = ['overview', 'skills', 'roles', 'wiring', 'unmanaged', 'crons', 'c
 const baseURL = new URL(window.location.pathname.endsWith('/') ? window.location.pathname : `${window.location.pathname}/`, window.location.origin);
 
 const CELLS = {
-  ok: ['✓', 'in place'],
+  ok: ['●', 'in place'],
   drift: ['~', 'drifted'],
   missing: ['+', 'missing'],
   conflict: ['!', 'conflict'],
@@ -48,6 +48,8 @@ function h(tag, props = {}, ...children) {
     else if (key === 'text') node.textContent = value;
     else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
     else if (key === 'dataset') Object.assign(node.dataset, value);
+    // CSSOM, not a style attribute: the view's CSP blocks inline style attributes.
+    else if (key === 'style') Object.assign(node.style, value);
     else if (value === true) node.setAttribute(key, '');
     else node.setAttribute(key, value);
   }
@@ -192,6 +194,7 @@ function renderChrome() {
   const links = pick(store.shared?.effective_ui, 'Links', 'links') || [];
   mount(document.getElementById('links'), ...links.map((link) => h('a', {href: pick(link, 'URL', 'url'), target: '_top', text: pick(link, 'Name', 'name')})));
   document.getElementById('links-menu').hidden = links.length === 0;
+  document.getElementById('scope').textContent = store.shared?.paths?.shared ? tilde(store.shared.paths.shared) : '';
 }
 
 function route() {
@@ -203,6 +206,9 @@ function route() {
     else node.removeAttribute('aria-current');
   });
   if (store.view === 'crons' && !store.crons && !store.cronsLoading) loadCrons();
+  document.getElementById('crumb').textContent = document.querySelector(`.tabs a[data-view="${store.view}"] .label`)?.textContent || '';
+  document.body.classList.remove('nav-open');
+  document.getElementById('open-nav').setAttribute('aria-expanded', 'false');
   renderView();
 }
 
@@ -243,11 +249,11 @@ function renderOverview(root) {
     ? h('span', {class: 'pill warn', text: `${plural(pending, 'change')} waiting`})
     : unsynced > 0 ? h('span', {class: 'pill warn', text: `${plural(unsynced, 'agent')} out of sync`}) : h('span', {class: 'pill ok', text: 'All agents synced'});
   const stats = h('div', {class: 'stats'},
-    stat(`${enabled.length}/${inv.agents.length}`, 'agents on'),
-    stat(inv.skills.length, 'skills'),
-    stat(inv.roles.length, 'roles'),
+    stat(`${enabled.length}/${inv.agents.length}`, 'Agents on'),
+    stat(inv.skills.length, 'Skills'),
+    stat(inv.roles.length, 'Roles'),
     stat(inv.mcp.length, 'MCP servers'),
-    stat(inv.hooks.length, 'hooks'),
+    stat(inv.hooks.length, 'Hooks'),
     h('div', {class: 'stat-state'}, state, h('span', {class: 'mono faint', text: `revision ${(inv.revision || '').slice(0, 10)}`})));
 
   const issues = [];
@@ -259,6 +265,8 @@ function renderOverview(root) {
     if (agent.root_state && agent.root_state !== 'synced') issues.push([`${agent.name}: root instructions ${agent.root_state}`, null, null]);
   }
   if (inv.repo_state && inv.repo_state !== 'synced') issues.unshift([`~/.agents link is ${inv.repo_state}`, null, null]);
+  const cronTrouble = (store.crons?.jobs || []).filter(cronNeedsAttention).length;
+  if (cronTrouble) issues.push([`Crons: ${cronFinding(store.crons.jobs, store.crons.jobs.filter(cronNeedsAttention))}`, '#crons', 'See crons']);
   const attention = h('div', {class: 'attention'},
     h('h2', {text: 'Needs attention'}),
     issues.length
@@ -292,6 +300,10 @@ function agentCard(agent) {
       h('span', {text: supports.length ? supports.join(' · ') : 'skills only'})));
   } else if (agent.error) {
     children.push(h('p', {class: 'item-detail', text: agent.error}));
+  } else if (!agent.enabled || !agent.detected) {
+    // Same rows as an inspected agent, with dashes, so the cards in a row end level.
+    children.push(h('div', {class: 'tally'}, tally('-', 'linked'), tally('-', 'drifted'), tally('-', 'missing'), tally('-', 'unmanaged')));
+    children.push(h('div', {class: 'card-foot'}, h('span', {text: agent.enabled ? 'Not found on this machine' : 'Turned off: sync leaves it alone'})));
   }
   if (agent.skill_root) children.push(h('p', {class: 'path', text: tilde(agent.skill_root)}));
   return h('article', {class: agent.enabled ? 'card' : 'card off'}, children);
@@ -455,7 +467,8 @@ function renderUnmanaged(root) {
 
 // ---------- crons ----------
 const CRON_OK_STATUS = new Set(['ok', 'success', 'succeeded', 'completed']);
-const CRON_ACCESS = {found: 'ok', empty: '', unreadable: 'bad', not_scanned: ''};
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const STRIP_HOURS = 24;
 
 async function loadCrons(refresh = false) {
   store.cronsLoading = true;
@@ -468,17 +481,16 @@ async function loadCrons(refresh = false) {
   }
   store.cronsLoading = false;
   renderChrome();
-  if (store.view === 'crons') renderView();
+  if (store.view === 'crons' || store.view === 'overview') renderView();
 }
-// A paused or disabled job's old error is not actionable; its own problems
-// (a missing program, miscased keys) still are not, until it is turned on.
+// A paused or disabled job's old error is not actionable until it is turned on again.
 function cronNeedsAttention(job) {
   if (['disabled', 'paused', 'not_loaded'].includes(job.state)) return false;
   return (job.problems || []).length > 0 || ['dead', 'missing'].includes(job.state);
 }
 function ago(iso) {
   const time = Date.parse(iso);
-  if (!time) return iso || '';
+  if (!time) return '';
   const minutes = Math.round((Date.now() - time) / 60000);
   if (minutes < 2) return 'just now';
   if (minutes < 90) return `${minutes} min ago`;
@@ -486,82 +498,277 @@ function ago(iso) {
   if (hours < 36) return `${hours} h ago`;
   return `${Math.round(hours / 24)} d ago`;
 }
-function cronResult(job) {
-  if (job.last_exit != null) return h('span', {class: `pill ${job.last_exit === 0 ? 'ok' : 'bad'}`, text: `exit ${job.last_exit}`});
-  if (job.last_status) return h('span', {class: `pill ${CRON_OK_STATUS.has(job.last_status) ? 'ok' : 'bad'}`, text: job.last_status});
-  return h('span', {class: 'faint', text: 'not recorded'});
+function until(ms) {
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 && hours < 10 ? `in ${hours} h ${minutes % 60} min` : `in ${Math.round(minutes / 60)} h`;
 }
-function cronState(job) {
-  const kind = ['dead', 'missing'].includes(job.state) ? 'bad' : job.state === 'service' && cronNeedsAttention(job) ? 'warn' : '';
-  return h('span', {class: `pill ${kind}`, text: job.state.replace('_', ' ')});
+function clock(ms) { return new Date(ms).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}); }
+function grouped(text) { return String(text).replace(/\d{4,}/g, (digits) => Number(digits).toLocaleString('en-US')); }
+function sentence(text) { return text ? text[0].toUpperCase() + text.slice(1) : ''; }
+
+// Cron fields: minute hour day-of-month month day-of-week, with *, lists, ranges and steps.
+function cronField(text, min, max) {
+  const values = new Set();
+  for (const part of text.split(',')) {
+    const [range, stepText] = part.split('/');
+    const step = Number(stepText || 1);
+    let [lo, hi] = range === '*' ? [min, max] : range.split('-').map(Number);
+    if (hi === undefined) hi = stepText ? max : lo;
+    if (![lo, hi, step].every(Number.isFinite) || step < 1 || lo < min || hi > max) return null;
+    for (let value = lo; value <= hi; value += step) values.add(max === 7 && value === 7 ? 0 : value);
+  }
+  return values;
+}
+function parseCron(expr) {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const spec = {m: cronField(fields[0], 0, 59), h: cronField(fields[1], 0, 23), dom: cronField(fields[2], 1, 31), mon: cronField(fields[3], 1, 12), dow: cronField(fields[4], 0, 7)};
+  if (Object.values(spec).some((value) => value === null)) return null;
+  return {...spec, domAny: fields[2] === '*', dowAny: fields[4] === '*'};
+}
+// `wall` carries the job's local time in its UTC fields.
+function cronMatches(spec, wall) {
+  if (!spec.m.has(wall.getUTCMinutes()) || !spec.h.has(wall.getUTCHours()) || !spec.mon.has(wall.getUTCMonth() + 1)) return false;
+  const dom = spec.dom.has(wall.getUTCDate());
+  const dow = spec.dow.has(wall.getUTCDay());
+  return spec.domAny || spec.dowAny ? dom && dow : dom || dow;
+}
+// Minutes east of UTC for an IANA zone or a +HH:MM offset.
+function zoneOffset(tz, at) {
+  const fixed = /^([+-])(\d\d):(\d\d)$/.exec(tz || '');
+  if (fixed) return (fixed[1] === '-' ? -1 : 1) * (Number(fixed[2]) * 60 + Number(fixed[3]));
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})
+      .formatToParts(at).map((part) => [part.type, part.value]));
+    return Math.round((Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute) - Math.floor(at / 60000) * 60000) / 60000);
+  } catch {
+    return -at.getTimezoneOffset();
+  }
+}
+// Fire times in the next STRIP_HOURS for cron and interval schedules; null for services and unknown forms.
+function cronFires(job, from) {
+  if (job.state === 'service') return null;
+  const schedule = job.schedule || '';
+  const end = from + STRIP_HOURS * 3600000;
+  const every = /^every (\d+)s$/.exec(schedule);
+  if (every) {
+    const step = Number(every[1]) * 1000;
+    const base = Date.parse(job.last_run) || from;
+    let next = base + step * Math.ceil(Math.max(0, from - base) / step);
+    const fires = [];
+    for (; next < end && fires.length < 2000; next += step) fires.push(next);
+    return {fires, interval: Number(every[1])};
+  }
+  const specs = schedule.split(';').map(parseCron);
+  if (!specs.length || specs.some((spec) => !spec)) return null;
+  const start = Math.ceil(from / 60000) * 60000;
+  const offset = zoneOffset(job.tz, new Date(start)) * 60000;
+  const fires = [];
+  for (let t = start; t < end; t += 60000) {
+    const wall = new Date(t + offset);
+    if (specs.some((spec) => cronMatches(spec, wall))) fires.push(t);
+  }
+  return {fires};
+}
+// The first fire within a week, for jobs that do not run in the next STRIP_HOURS.
+function nextFire(job, from) {
+  const specs = (job.schedule || '').split(';').map(parseCron);
+  if (!specs.length || specs.some((spec) => !spec)) return null;
+  const start = Math.ceil(from / 60000) * 60000;
+  const offset = zoneOffset(job.tz, new Date(start)) * 60000;
+  for (let t = start; t < start + 8 * 86400000; t += 60000) {
+    if (specs.some((spec) => cronMatches(spec, new Date(t + offset)))) return t;
+  }
+  return null;
+}
+function weekdayClock(ms) { return `${DAY_NAMES[new Date(ms).getDay()]} ${clock(ms)}`; }
+function duration(seconds) {
+  if (seconds % 3600 === 0) return seconds === 3600 ? 'hour' : `${seconds / 3600} h`;
+  if (seconds % 60 === 0) return seconds === 60 ? 'minute' : `${seconds / 60} min`;
+  return `${seconds} s`;
+}
+function describeSchedule(job) {
+  const schedule = job.schedule || '';
+  if (job.state === 'service') return 'Always on';
+  const every = /^every (\d+)s$/.exec(schedule);
+  if (every) return `Every ${duration(Number(every[1]))}`;
+  const lines = schedule.split(';').map((line) => line.trim().split(/\s+/));
+  if (!lines.length || lines.some((fields) => fields.length !== 5)) return schedule;
+  const zone = zoneOffset(job.tz, new Date()) === -new Date().getTimezoneOffset() ? '' : ` (${job.tz})`;
+  const [m, hr, dom, mon, dow] = lines[0];
+  const step = /^\*\/(\d+)$/.exec(m);
+  if (lines.length === 1 && step && hr === '*' && dom === '*' && mon === '*' && dow === '*') return `Every ${step[1]} min`;
+  const sameTime = lines.every((fields) => fields[0] === m && fields[1] === hr && fields[2] === '*' && fields[3] === '*');
+  if (!sameTime || !/^\d+$/.test(m) || !/^\d+$/.test(hr)) return schedule;
+  const time = `${hr.padStart(2, '0')}:${m.padStart(2, '0')}`;
+  const days = new Set();
+  for (const fields of lines) {
+    const set = cronField(fields[4], 0, 7);
+    if (!set) return schedule;
+    set.forEach((day) => days.add(day));
+  }
+  if (days.size === 7) return `Daily ${time}${zone}`;
+  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return `Weekdays ${time}${zone}`;
+  const order = [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  return `${order.map((day) => DAY_NAMES[day]).join(', ')} ${time}${zone}`;
+}
+function cronProblem(job) {
+  const problem = (job.problems || [])[0] || job.state;
+  return sentence(grouped(problem.replace(/^last error: /, 'Last error: ')));
+}
+function cronFinding(jobs, attention) {
+  if (!attention.length) return `Nothing failing across ${plural(jobs.length, 'job')}.`;
+  const has = (job, text) => (job.problems || []).some((problem) => problem.includes(text));
+  const loops = attention.filter((job) => has(job, 'crash loop')).length;
+  const missed = attention.filter((job) => has(job, 'has not run')).length;
+  const other = attention.length - loops - missed;
+  const kinds = [loops && plural(loops, 'crash loop'), missed && plural(missed, 'missed schedule'), other && plural(other, 'failing job')].filter(Boolean);
+  return `${plural(attention.length, 'job')} need${attention.length === 1 ? 's' : ''} attention: ${kinds.join(', ')}.`;
+}
+function cronResult(job) {
+  if (job.last_exit != null) return job.last_exit === 0 ? h('span', {class: 'faint', text: 'exit 0'}) : h('span', {class: 'pill bad', text: `exit ${job.last_exit}`});
+  if (job.last_status) return CRON_OK_STATUS.has(job.last_status) ? h('span', {class: 'faint', text: job.last_status}) : h('span', {class: 'pill bad', text: job.last_status.replace('_', ' ')});
+  return h('span', {class: 'faint', text: '-'});
 }
 function cronKey(job) { return `cron:${job.host}/${job.source}/${job.id}`; }
+function hostName(host) { return host === 'local' ? 'This Mac' : host; }
+function openCron(job) {
+  store.openRows.add(cronKey(job));
+  renderView();
+  document.getElementById(cronKey(job))?.scrollIntoView({block: 'center'});
+}
 
 function renderCrons(root) {
   const data = store.crons;
+  const stamp = data ? h('span', {class: 'stamp', text: `Collected ${clock(Date.parse(data.scanned_at))}`}) : null;
   const refresh = h('button', {type: 'button', disabled: store.cronsLoading || undefined, onclick: () => loadCrons(true), text: store.cronsLoading ? 'Collecting…' : 'Collect again'});
-  const collected = data ? h('span', {class: 'mono faint', text: `collected ${new Date(data.scanned_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`}) : null;
-  const head = viewHead('Crons', 'Scheduled jobs on every host in crons.hosts: launchd, crontab, systemd timers, and the Hermes, Codex and Claude desktop schedulers. Failing KeepAlive services are listed too. Read-only: tackroom never changes a job.',
-    h('div', {class: 'toolbar'}, collected, refresh));
+  const jobs = data?.jobs || [];
+  const attention = jobs.filter(cronNeedsAttention);
+  const head = viewHead('Crons', data ? cronFinding(jobs, attention) : 'Scheduled jobs and failing services on every host in crons.hosts.', h('div', {class: 'title-actions'}, stamp, refresh));
   if (!data) {
-    mount(root, head, store.cronsError
-      ? h('div', {class: 'error-box'}, h('strong', {text: 'Could not collect scheduled jobs. '}), store.cronsError)
-      : h('p', {class: 'loading', text: 'Collecting scheduled jobs. SSH hosts can take a few seconds.'}));
+    if (store.cronsError) {
+      mount(root, head, h('div', {class: 'error-box'}, h('strong', {text: 'Could not collect scheduled jobs. '}), store.cronsError, ' ', h('button', {type: 'button', class: 'quiet', onclick: () => loadCrons(true), text: 'Retry'})));
+      return;
+    }
+    // The final layout with its figures still empty, so nothing moves when the data lands.
+    const waiting = (title) => h('section', {class: 'panel-block'}, h('div', {class: 'block-head'}, h('h2', {text: title})), h('p', {class: 'block-empty', text: 'Collecting from every host in crons.hosts. SSH hosts take a few seconds.'}));
+    mount(root, head, h('div', {class: 'kpis'}, kpi('Scheduled jobs', '-'), kpi('Failing services', '-'), kpi('Need attention', '-'), kpi('Hosts read', '-')), waiting('Needs attention'), waiting('Next 24 hours'));
     return;
   }
-  const jobs = data.jobs || [];
-  const attention = jobs.filter(cronNeedsAttention);
-  const hosts = [...new Set([...jobs.map((job) => job.host), ...(data.access || []).map((entry) => entry.host)])];
-  const stats = h('div', {class: 'stats'},
-    stat(jobs.filter((job) => job.state !== 'service').length, 'scheduled jobs'),
-    stat(jobs.filter((job) => job.state === 'service').length, 'failing services'),
-    stat(hosts.length, hosts.length === 1 ? 'host' : 'hosts'),
-    h('div', {class: 'stat-state'}, attention.length
-      ? h('span', {class: 'pill bad', text: `${plural(attention.length, 'job')} need${attention.length === 1 ? 's' : ''} attention`})
-      : h('span', {class: 'pill ok', text: 'Nothing failing'})));
-  const issues = h('div', {class: 'attention'},
-    h('h2', {text: 'Needs attention'}),
-    attention.length
-      ? h('ul', {}, attention.map((job) => h('li', {},
-        h('span', {}, h('b', {text: `${job.host} · ${job.name || job.id}`}), ` ${(job.problems || [job.state])[0]}`),
-        h('a', {href: '#crons', text: 'Details', onclick: (event) => { event.preventDefault(); store.openRows.add(cronKey(job)); store.cronFilter = 'all'; renderView(); document.getElementById(cronKey(job))?.scrollIntoView({block: 'center'}); }}))))
-      : h('p', {class: 'muted', text: 'Every job that should run did, and nothing is crash-looping.'}));
-  const filters = segmented([['all', 'All'], ['attention', 'Needs attention']], store.cronFilter, (value) => { store.cronFilter = value; renderView(); });
-  const sections = hosts.map((host) => {
-    const access = (data.access || []).filter((entry) => entry.host === host);
-    const rows = jobs.filter((job) => job.host === host && (store.cronFilter === 'all' || cronNeedsAttention(job)));
-    const chips = h('div', {class: 'chips'}, access.map((entry) => h('span', {class: `pill ${CRON_ACCESS[entry.state] ?? ''}`, title: entry.detail || entry.state, text: `${entry.source} · ${entry.state === 'found' ? entry.jobs : entry.state.replace('_', ' ')}`})));
-    return h('section', {class: 'group'}, h('h2', {text: host === 'local' ? 'This machine' : host}), chips,
-      rows.length ? cronTable(rows) : h('p', {class: 'muted', text: store.cronFilter === 'all' ? 'No scheduled jobs found here.' : 'Nothing needs attention here.'}));
+  const hosts = [...new Set([...(data.access || []).map((entry) => entry.host), ...jobs.map((job) => job.host)])];
+  const reached = hosts.filter((host) => (data.access || []).some((entry) => entry.host === host && entry.state !== 'not_scanned'));
+  const services = jobs.filter((job) => job.state === 'service').length;
+  const kpis = h('div', {class: 'kpis'},
+    kpi('Scheduled jobs', jobs.length - services),
+    kpi('Failing services', services, services > 0),
+    kpi('Need attention', attention.length, attention.length > 0),
+    kpi('Hosts read', `${reached.length} of ${hosts.length}`, reached.length < hosts.length));
+  const blocks = [head, kpis];
+  if (attention.length) blocks.push(attentionPanel(attention));
+  blocks.push(fireStrip(jobs, hosts));
+  for (const host of hosts) blocks.push(hostSection(host, data));
+  blocks.push(h('p', {class: 'footnote', text: 'Hosts come from crons.hosts in tackroom.local.yaml. The CLI shows the same: tackroom cron collect --table.'}));
+  mount(root, ...blocks);
+}
+function kpi(label, value, bad = false) {
+  return h('div', {class: 'kpi'}, h('span', {class: 'kpi-label', text: label}), h('b', {class: bad ? 'kpi-value bad' : 'kpi-value', text: String(value)}));
+}
+function attentionPanel(attention) {
+  const showAll = store.openRows.has('cron:attention-all');
+  const rows = showAll ? attention : attention.slice(0, 4);
+  return h('section', {class: 'panel-block'},
+    h('div', {class: 'block-head'}, h('h2', {text: 'Needs attention'}), h('span', {class: 'block-meta', text: plural(attention.length, 'job')})),
+    h('div', {class: 'block-body'}, h('table', {class: 'grid-table attention-table'},
+      h('thead', {}, h('tr', {}, ['Job', 'Host', 'Problem', 'Last run', ''].map((label) => h('th', {scope: 'col', text: label})))),
+      h('tbody', {}, rows.map((job) => h('tr', {},
+        h('td', {class: 'ident'}, h('span', {class: 'ident-name', text: job.name || job.id}), h('span', {class: 'ident-sub', text: job.source})),
+        h('td', {class: 'muted nowrap', text: hostName(job.host)}),
+        h('td', {class: 'problem', text: cronProblem(job)}),
+        h('td', {class: 'muted nowrap fig', title: job.last_run || '', text: job.last_run ? ago(job.last_run) : '-'}),
+        h('td', {class: 'action'}, h('button', {type: 'button', class: 'quiet', onclick: () => openCron(job), text: 'Details'}))))))),
+    attention.length > 4 ? h('div', {class: 'block-foot'}, h('button', {type: 'button', class: 'quiet', onclick: () => toggleRow('cron:attention-all'), text: showAll ? 'Show fewer' : `Show all ${attention.length}`})) : null);
+}
+function fireStrip(jobs, hosts) {
+  const now = Date.now();
+  const rows = [];
+  for (const host of hosts) {
+    for (const job of jobs.filter((item) => item.host === host && !['disabled', 'paused', 'not_loaded'].includes(item.state))) {
+      const fires = cronFires(job, now);
+      if (fires) rows.push({job, ...fires});
+    }
+  }
+  rows.sort((a, b) => (a.job.host === b.job.host ? (a.fires[0] ?? Infinity) - (b.fires[0] ?? Infinity) : hosts.indexOf(a.job.host) - hosts.indexOf(b.job.host)));
+  const span = STRIP_HOURS * 3600000;
+  const at = (t) => `${(((t - now) / span) * 100).toFixed(3)}%`;
+  const firstHour = Math.ceil(now / 3600000) * 3600000;
+  const ticks = [];
+  for (let t = firstHour; t < now + span; t += 3600000) if (new Date(t).getHours() % 6 === 0) ticks.push(t);
+  const axis = h('div', {class: 'strip-row strip-axis'}, h('span', {class: 'strip-label'}),
+    h('div', {class: 'strip-track'}, h('span', {class: 'strip-now', style: {left: '0'}, text: `Now ${clock(now)}`}), ticks.filter((t) => t - now > 2 * 3600000).map((t) => h('span', {class: 'strip-hour', style: {left: at(t)}, text: clock(t)}))));
+  const body = rows.map(({job, fires, interval}) => {
+    const dense = interval ? interval < 1800 : fires.length > 48;
+    const track = h('div', {class: 'strip-track', title: `${describeSchedule(job)}${fires[0] ? `, next ${clock(fires[0])}` : ''}`},
+      ticks.map((t) => h('span', {class: 'strip-grid', style: {left: at(t)}})),
+      dense
+        ? h('span', {class: 'strip-band', style: {left: at(fires[0] ?? now), right: '0'}})
+        : fires.map((t) => h('span', {class: 'strip-fire', style: {left: at(t)}})),
+      fires.length ? null : h('span', {class: 'strip-later', text: (() => { const t = nextFire(job, now); return t ? `Next run ${weekdayClock(t)}` : 'No run within a week'; })()}));
+    return h('div', {class: cronNeedsAttention(job) ? 'strip-row trouble' : 'strip-row'},
+      h('span', {class: 'strip-label'}, h('span', {class: 'strip-name', text: job.name || job.id}), h('span', {class: 'strip-host', text: `${hostName(job.host)} · ${describeSchedule(job)}`})),
+      track);
   });
-  mount(root, head, stats, issues, h('div', {class: 'toolbar'}, filters), ...sections,
-    h('p', {class: 'faint', text: 'Add SSH hosts with crons.hosts in tackroom.local.yaml, for example hosts: [local, laptop]. Same data from the CLI: tackroom cron collect --table.'}));
+  return h('section', {class: 'panel-block strip'},
+    h('div', {class: 'block-head'}, h('h2', {text: 'Next 24 hours'}), h('span', {class: 'block-meta', text: `${plural(rows.length, 'scheduled job')} · each mark is one run`})),
+    h('div', {class: 'block-body'}, axis, ...body));
+}
+function hostSection(host, data) {
+  const access = (data.access || []).filter((entry) => entry.host === host);
+  const unreachable = access.length > 0 && access.every((entry) => entry.state === 'not_scanned') && access.some((entry) => (entry.detail || '').startsWith('probe failed'));
+  const rows = data.jobs.filter((job) => job.host === host);
+  const sources = access.filter((entry) => entry.state !== 'not_scanned' || !/Linux only|cloud routines|not readable/.test(entry.detail || ''))
+    .map((entry) => h('span', {class: entry.state === 'unreadable' ? 'source bad' : 'source', title: entry.detail || entry.state}, `${entry.source} `, h('b', {text: entry.state === 'found' ? String(entry.jobs) : entry.state.replace('_', ' ')})));
+  return h('section', {class: 'panel-block'},
+    h('div', {class: 'block-head'}, h('h2', {text: hostName(host)}), h('span', {class: 'block-meta', text: plural(rows.length, 'job')})),
+    h('div', {class: 'sources'}, sources),
+    unreachable
+      ? h('p', {class: 'block-empty', text: `Could not reach ${host}: ${access[0].detail}`})
+      : rows.length ? cronTable(rows) : h('p', {class: 'block-empty', text: 'No scheduled jobs here.'}));
 }
 function cronTable(rows) {
+  const now = Date.now();
   const tbody = h('tbody', {});
   for (const job of rows) {
     const key = cronKey(job);
     const open = store.openRows.has(key);
     const toggle = () => toggleRow(key);
-    tbody.append(h('tr', {id: key, class: cronNeedsAttention(job) ? 'row trouble' : 'row', tabindex: '0', 'aria-expanded': String(open), onclick: toggle, onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }},
-      h('td', {class: 'lead'},
-        h('div', {class: 'lead-title'}, job.name || job.id, h('span', {class: 'tag', text: job.source})),
-        job.name && job.name !== job.id ? h('div', {class: 'lead-cmd', text: job.id}) : null),
-      h('td', {class: 'mono', text: job.schedule || ''}),
-      h('td', {}, cronState(job)),
-      h('td', {title: job.last_run || '', text: job.last_run ? ago(job.last_run) : ''}),
-      h('td', {}, cronResult(job)),
-      h('td', {class: 'num', text: job.runs != null ? String(job.runs) : ''})));
+    const next = cronFires(job, now)?.fires?.[0];
+    const paused = ['disabled', 'paused', 'not_loaded'].includes(job.state);
+    const schedule = describeSchedule(job);
+    const later = !paused && !next && job.state !== 'service' ? nextFire(job, now) : null;
+    const nextText = paused ? 'Paused' : next ? until(next - now) : later ? weekdayClock(later) : '-';
+    const lastText = job.last_run ? ago(job.last_run) : '-';
+    tbody.append(h('tr', {id: key, class: cronNeedsAttention(job) ? 'row trouble' : paused ? 'row paused' : 'row', tabindex: '0', 'aria-expanded': String(open), onclick: toggle, onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }},
+      h('td', {class: 'ident'},
+        h('span', {class: 'ident-name', text: job.name || job.id}),
+        h('span', {class: 'ident-sub', text: job.name && job.name !== job.id ? `${job.source} · ${job.id}` : job.source}),
+        h('span', {class: 'ident-phone', text: `${schedule} · ${nextText === '-' ? `ran ${lastText}` : nextText}`})),
+      h('td', {class: 'nowrap', text: schedule}),
+      h('td', {class: paused ? 'faint nowrap fig' : 'nowrap fig', title: next ? new Date(next).toLocaleString() : '', text: nextText}),
+      h('td', {class: 'muted nowrap fig', title: job.last_run || '', text: lastText}),
+      h('td', {class: 'result'}, cronResult(job)),
+      h('td', {class: 'num', text: job.runs != null ? job.runs.toLocaleString('en-US') : '-'})));
     if (open) {
-      const fields = [['id', job.id], ['command', job.command], ['log', job.log && tilde(job.log)], ['time zone', job.tz], ['created by', job.created_by], ['connectors', (job.connectors || []).join(', ')], ['effect', job.effect], ['last run', job.last_run], ['inferred', (job.inferred || []).join(', ')]]
+      const fields = [['ID', job.id], ['Command', job.command], ['Log', job.log && tilde(job.log)], ['Schedule', job.schedule], ['Time zone', job.tz], ['Last run', job.last_run], ['Created by', job.created_by], ['Connectors', (job.connectors || []).join(', ')], ['Effect', job.effect], ['Inferred', (job.inferred || []).join(', ')]]
         .filter(([, value]) => value);
       tbody.append(h('tr', {class: 'detail'}, h('td', {colspan: '6'}, h('div', {class: 'detail-grid'},
-        (job.problems || []).length ? h('ul', {class: 'problems'}, job.problems.map((problem) => h('li', {text: problem}))) : null,
-        h('dl', {}, fields.flatMap(([label, value]) => [h('dt', {text: label}), h('dd', {class: label === 'command' || label === 'log' ? 'mono' : '', text: value})]))))));
+        (job.problems || []).length ? h('ul', {class: 'problems'}, job.problems.map((problem) => h('li', {text: sentence(grouped(problem))}))) : null,
+        h('dl', {}, fields.flatMap(([label, value]) => [h('dt', {text: label}), h('dd', {class: ['ID', 'Command', 'Log', 'Schedule'].includes(label) ? 'code' : '', text: value})]))))));
     }
   }
-  return h('div', {class: 'matrix-wrap'}, h('table', {class: 'matrix jobs'},
-    h('thead', {}, h('tr', {}, ['Job', 'Schedule', 'State', 'Last run', 'Result', 'Runs'].map((label, i) => h('th', {class: i === 0 ? 'lead' : '', scope: 'col', text: label})))),
+  return h('div', {class: 'block-body'}, h('table', {class: 'grid-table jobs'},
+    h('thead', {}, h('tr', {}, [['Job', ''], ['Schedule', ''], ['Next run', ''], ['Last run', ''], ['Result', ''], ['Runs', 'num']].map(([label, cls]) => h('th', {scope: 'col', class: cls, text: label})))),
     tbody));
 }
 
@@ -724,6 +931,11 @@ document.addEventListener('click', (event) => {
   const menu = document.getElementById('links-menu');
   if (menu.open && !menu.contains(event.target)) menu.open = false;
 });
+document.getElementById('open-nav').addEventListener('click', (event) => {
+  const open = document.body.classList.toggle('nav-open');
+  event.currentTarget.setAttribute('aria-expanded', String(open));
+});
 window.addEventListener('hashchange', route);
 route();
 refresh();
+loadCrons();
