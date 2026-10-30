@@ -351,8 +351,9 @@ function agentCard(agent) {
     ], c.managed, 'skills', 76)
     : ring([], '-', agent.enabled ? '' : 'off', 76);
   const value = (n) => (live ? n || 0 : '-');
-  const title = [agent.skill_root && tilde(agent.skill_root), live && `${tokens(agent.tokens)} tokens of skill listings (est.)`].filter(Boolean).join(' · ');
-  return h('article', {class: agent.enabled ? 'card agent' : 'card agent off'},
+  const title = [agent.error, agent.skill_root && tilde(agent.skill_root), live && `${tokens(agent.tokens)} tokens of skill listings (est.)`].filter(Boolean).join(' · ');
+  const idle = !agent.enabled || (agent.inspected && !agent.detected);
+  return h('article', {class: idle ? 'card agent off' : 'card agent'},
     h('div', {class: 'agent-head'},
       agentMark(agent.name, 'ag ag-card'),
       h('div', {class: 'agent-name'},
@@ -363,17 +364,14 @@ function agentCard(agent) {
       h('ul', {class: 'facts'},
         fact('i-drift', 'Drifted', value(c.drifted), c.drifted ? 'warn' : ''),
         fact('i-minus', 'Missing', value(c.missing), c.missing ? 'warn' : ''),
-        fact('i-unmanaged', 'Unmanaged', value(c.unmanaged)))),
-    h('div', {class: 'supports'}, [['supports_mcp', 'i-plug', 'MCP servers'], ['supports_hooks', 'i-bolt', 'Hooks'], ['supports_roles', 'i-roles', 'Roles']]
-      .map(([key, id, word]) => h('span', {class: agent[key] ? 'on' : 'off', title: `${word}: ${agent[key] ? 'supported' : 'not supported'}`, 'aria-label': `${word}: ${agent[key] ? 'supported' : 'not supported'}`}, icon(id))),
-      agent.error ? h('span', {class: 'supports-note', title: agent.error, text: agent.error}) : null));
+        fact('i-unmanaged', 'Unmanaged', value(c.unmanaged)))));
 }
 function fact(iconId, label, value, kind = '') { return h('li', {class: kind}, icon(iconId), h('span', {text: label}), h('b', {text: String(value)})); }
 
 // ---------- matrices ----------
 function cell(state, agent) {
   const word = CELLS[state] || CELLS.unknown;
-  return h('span', {class: `cell ${state}`, title: `${agent}: ${word}`, 'aria-label': `${agent}: ${word}`});
+  return h('span', {class: `cell ${state}`, role: 'img', title: `${agent}: ${word}`, 'aria-label': `${agent}: ${word}`});
 }
 // How many agent cells are in each state, as a figure, a bar and a legend.
 function coverage(items, states, noun) {
@@ -388,7 +386,7 @@ function coverage(items, states, noun) {
     h('div', {class: 'legend'}, states.filter((state) => n(state) || ['ok', 'drift', 'missing'].includes(state)).map((state) => h('span', {}, h('span', {class: `cell ${state}`, 'aria-hidden': 'true'}), CELLS[state], h('b', {text: String(n(state))})))));
 }
 function matrixHead(lead) {
-  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col'}, h('span', {class: 'col-agent'}, agentMark(name), name)))));
+  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col'}, h('span', {class: 'col-agent', title: name}, agentMark(name), h('span', {class: 'col-name', text: name}))))));
 }
 
 function renderSkills(root) {
@@ -610,6 +608,16 @@ function zoneOffset(tz, at) {
     return -at.getTimezoneOffset();
   }
 }
+// The zone offset in ms at a time, looked up once per hour: offsets change on the hour or half hour.
+function hourlyOffset(tz) {
+  let hour = null;
+  let offset = 0;
+  return (t) => {
+    const at = Math.floor(t / 1800000);
+    if (at !== hour) { hour = at; offset = zoneOffset(tz, new Date(t)) * 60000; }
+    return offset;
+  };
+}
 // Fire times in the next STRIP_HOURS for cron and interval schedules; null for services and unknown forms.
 function cronFires(job, from) {
   if (job.state === 'service') return null;
@@ -627,22 +635,24 @@ function cronFires(job, from) {
   const specs = schedule.split(';').map(parseCron);
   if (!specs.length || specs.some((spec) => !spec)) return null;
   const start = Math.ceil(from / 60000) * 60000;
-  const offset = zoneOffset(job.tz, new Date(start)) * 60000;
+  const offset = hourlyOffset(job.tz);
   const fires = [];
   for (let t = start; t < end; t += 60000) {
-    const wall = new Date(t + offset);
+    const wall = new Date(t + offset(t));
     if (specs.some((spec) => cronMatches(spec, wall))) fires.push(t);
   }
   return {fires};
 }
+// Runs more often than every 30 minutes read as a band, not as single runs.
+function dense({fires, interval}) { return interval ? interval < 1800 : fires.length > 48; }
 // The first fire within a week, for jobs that do not run in the next STRIP_HOURS.
 function nextFire(job, from) {
   const specs = (job.schedule || '').split(';').map(parseCron);
   if (!specs.length || specs.some((spec) => !spec)) return null;
   const start = Math.ceil(from / 60000) * 60000;
-  const offset = zoneOffset(job.tz, new Date(start)) * 60000;
+  const offset = hourlyOffset(job.tz);
   for (let t = start; t < start + 8 * 86400000; t += 60000) {
-    if (specs.some((spec) => cronMatches(spec, new Date(t + offset)))) return t;
+    if (specs.some((spec) => cronMatches(spec, new Date(t + offset(t))))) return t;
   }
   return null;
 }
@@ -742,7 +752,7 @@ function renderCrons(root) {
   }
   const jobs = data.jobs || [];
   const hosts = [...new Set([...(data.access || []).map((entry) => entry.host), ...jobs.map((job) => job.host)])];
-  const attention = jobs.filter(cronNeedsAttention);
+  const attention = jobs.filter(cronNeedsAttention).sort((a, b) => (Date.parse(b.last_run) || 0) - (Date.parse(a.last_run) || 0));
   mount(root,
     h('div', {class: 'hero-grid'}, hosts.map((host) => hostCard(host, data)), upNextCard(jobs)),
     attention.length ? h('section', {class: 'block'},
@@ -771,7 +781,9 @@ function upNextCard(jobs) {
   const queue = [];
   for (const job of jobs) {
     if (PAUSED.includes(job.state) || job.state === 'service') continue;
-    const next = cronFires(job, now)?.fires?.[0] ?? nextFire(job, now);
+    const fires = cronFires(job, now);
+    if (fires && dense(fires)) continue;
+    const next = fires?.fires?.[0] ?? nextFire(job, now);
     if (next) queue.push({job, next});
   }
   queue.sort((a, b) => a.next - b.next);
@@ -789,7 +801,8 @@ function upNextCard(jobs) {
 }
 function alertCard(job) {
   const [iconId, label, detail] = problemKind(job);
-  return h('button', {type: 'button', class: 'alert-card', title: `${job.name || job.id}\n${(job.problems || []).map((problem) => sentence(grouped(problem))).join('\n')}`, onclick: () => openCron(job)},
+  const stale = iconId === 'i-alarm' && Date.now() - (Date.parse(job.last_run) || 0) > 7 * 86400000;
+  return h('button', {type: 'button', class: stale ? 'alert-card stale' : 'alert-card', title: `${job.name || job.id}\n${(job.problems || []).map((problem) => sentence(grouped(problem))).join('\n')}`, onclick: () => openCron(job)},
     h('span', {class: 'alert-top'}, icon(iconId, 'alert-icon'), h('span', {text: label}), h('span', {class: 'alert-ago', text: job.last_run ? ago(job.last_run) : ''})),
     h('span', {class: 'alert-name', text: shortName(job)}),
     h('span', {class: 'alert-meta'}, icon('i-laptop'), h('span', {text: hostName(job.host)}), detail ? h('span', {class: 'alert-detail', text: detail}) : null));
@@ -810,17 +823,19 @@ function fireStrip(jobs, hosts) {
   const ticks = [];
   for (let t = firstHour; t < now + span; t += 3600000) if (new Date(t).getHours() % 3 === 0) ticks.push(t);
   const axis = h('div', {class: 'strip-row strip-axis'}, h('span', {class: 'strip-label'}),
-    h('div', {class: 'strip-track'}, h('span', {class: 'strip-now', style: {left: '0'}, text: `Now ${clock(now)}`}), ticks.filter((t) => t - now > 2 * 3600000).map((t) => h('span', {class: t - now < 5 * 3600000 || new Date(t).getHours() % 6 ? 'strip-hour minor' : 'strip-hour', style: {left: at(t)}, text: clock(t)}))));
+    h('div', {class: 'strip-track'}, h('span', {class: 'strip-now', style: {left: '0'}, text: `Now ${clock(now)}`}), ticks.filter((t) => t - now > 2 * 3600000).map((t) => h('span', {class: t - now < 7 * 3600000 || new Date(t).getHours() % 6 ? 'strip-hour minor' : 'strip-hour', style: {left: at(t)}, text: clock(t)}))));
   const body = rows.map(({job, fires, interval}) => {
-    const dense = interval ? interval < 1800 : fires.length > 48;
+    const band = dense({fires, interval});
+    const many = !band && fires.length > 24;
     const later = fires.length ? null : nextFire(job, now);
     const track = h('div', {class: 'strip-track', title: `${describeSchedule(job)}${fires[0] ? `, next ${clock(fires[0])}` : ''}`},
       ticks.map((t) => h('span', {class: 'strip-grid', style: {left: at(t)}})),
-      dense
+      band
         ? h('span', {class: 'strip-band', style: {left: at(fires[0] ?? now), right: '0'}})
         : fires.map((t) => h('span', {class: 'strip-fire', style: {left: at(t)}})),
+      many ? h('span', {class: 'strip-band alt', style: {left: at(fires[0]), right: '0'}}) : null,
       fires.length ? null : h('span', {class: 'strip-later', text: later ? `→ ${weekdayClock(later)}` : 'not this week'}));
-    return h('div', {class: cronNeedsAttention(job) ? 'strip-row trouble' : 'strip-row'},
+    return h('div', {class: ['strip-row', cronNeedsAttention(job) && 'trouble', many && 'many'].filter(Boolean).join(' ')},
       h('span', {class: 'strip-label', title: `${job.name || job.id} · ${hostName(job.host)} · ${describeSchedule(job)}`}, sourceIcon(job), h('span', {class: 'strip-name', text: shortName(job)}), hosts.length > 1 ? h('span', {class: 'strip-host', text: hostName(job.host)}) : null),
       track);
   });
@@ -862,7 +877,7 @@ function cronTable(rows, showHost) {
     const lastText = job.last_run ? ago(job.last_run) : '-';
     const result = job.last_exit != null ? `exit ${job.last_exit}` : job.last_status ? job.last_status.replace('_', ' ') : '';
     tbody.append(h('tr', {id: key, class: `row ${health}`, tabindex: '0', 'aria-expanded': String(open), onclick: toggle, onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }},
-      h('td', {class: 'status-cell', title: [HEALTH[health][1], result].filter(Boolean).join(' · ')}, icon(HEALTH[health][0], `health ${health}`)),
+      h('td', {class: 'status-cell', title: [HEALTH[health][1], result].filter(Boolean).join(' · ')}, icon(HEALTH[health][0], `health ${health}`), h('span', {class: 'sr', text: HEALTH[health][1]})),
       h('td', {class: 'ident'},
         h('span', {class: 'ident-name', title: job.name || job.id}, sourceIcon(job), h('span', {text: shortName(job)})),
         h('span', {class: 'ident-phone', text: `${schedule} · ${nextText === '-' ? `ran ${lastText}` : nextText}`})),
@@ -897,6 +912,7 @@ async function loadConfigLayer(layer) {
   renderView();
 }
 function renderConfig(root) {
+  actions(segmented([['shared', 'Shared'], ['local', 'Local'], ['effective', 'Effective']], store.configLayer, (value) => loadConfigLayer(value)));
   const state = store.configState;
   if (!state || state.active_layer !== store.configLayer) {
     if (store.configNote) {
@@ -924,7 +940,6 @@ function renderConfig(root) {
     h('button', {type: 'button', class: 'quiet', dataset: {dirty: '1'}, disabled: readOnly || !dirty || undefined, onclick: () => { delete store.drafts[layer]; store.configDiff = ''; store.configNote = ''; renderView(); }, text: 'Discard'}),
     store.configNote ? h('span', {class: 'note', text: store.configNote}) : null);
   const path = layer === 'effective' ? 'merge of both files' : tilde(state.paths?.[layer] || '');
-  actions(segmented([['shared', 'Shared'], ['local', 'Local'], ['effective', 'Effective']], layer, (value) => loadConfigLayer(value)));
   mount(root,
     h('div', {class: 'config-meta'}, h('span', {}, icon('i-folder'), path), state.revision ? h('span', {}, icon('i-commit'), state.revision.slice(0, 12)) : null, readOnly ? h('span', {text: 'read-only'}) : null),
     editor,
