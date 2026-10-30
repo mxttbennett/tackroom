@@ -1,0 +1,1 @@
+Fonts served by tackroom view: Public Sans and IBM Plex Mono from Fontsource 5.3.0 (latin subset), under the SIL Open Font License 1.1. Copyright notices and the license text are in ../THIRD_PARTY_NOTICES.md.

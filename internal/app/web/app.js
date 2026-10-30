@@ -1,18 +1,19 @@
 const VIEWS = ['overview', 'skills', 'roles', 'wiring', 'unmanaged', 'crons', 'config'];
 const baseURL = new URL(window.location.pathname.endsWith('/') ? window.location.pathname : `${window.location.pathname}/`, window.location.origin);
 
+// What each matrix dot means.
 const CELLS = {
-  ok: ['✓', 'in place'],
-  drift: ['~', 'drifted'],
-  missing: ['+', 'missing'],
-  conflict: ['!', 'conflict'],
-  stale: ['×', 'stale'],
-  off: ['·', 'not targeted'],
-  disabled: ['–', 'turned off'],
-  unsupported: ['', 'not supported'],
-  absent: ['', 'not installed'],
-  error: ['!', 'config unreadable'],
-  unknown: ['?', 'unknown'],
+  ok: 'in place',
+  drift: 'drifted',
+  missing: 'missing',
+  conflict: 'conflict',
+  stale: 'stale',
+  off: 'not targeted',
+  disabled: 'turned off',
+  unsupported: 'not supported',
+  absent: 'not installed',
+  error: 'config unreadable',
+  unknown: 'unknown',
 };
 const ATTENTION = new Set(['drift', 'missing', 'conflict', 'error', 'unknown']);
 
@@ -48,6 +49,8 @@ function h(tag, props = {}, ...children) {
     else if (key === 'text') node.textContent = value;
     else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
     else if (key === 'dataset') Object.assign(node.dataset, value);
+    // CSSOM, not a style attribute: the view's CSP blocks inline style attributes.
+    else if (key === 'style') Object.assign(node.style, value);
     else if (value === true) node.setAttribute(key, '');
     else node.setAttribute(key, value);
   }
@@ -65,14 +68,55 @@ function tilde(path) {
   if (!path || !home) return path || '';
   return path === home ? '~' : path.split(`${home}/`).join('~/');
 }
-function icon(id) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  use.setAttribute('href', `#${id}`);
-  svg.append(use);
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgNode(tag, attrs = {}) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+}
+function icon(id, cls) {
+  const svg = svgNode('svg', {'aria-hidden': 'true', ...(cls ? {class: cls} : {})});
+  svg.append(svgNode('use', {href: `#${id}`}));
   return svg;
 }
+// A thin ring split into parts [{value, kind, label}]; CSS colours each kind. The centre holds a figure and a word.
+function ring(parts, figure, word, size = 88) {
+  const stroke = size >= 80 ? 7 : 6;
+  const c = size / 2;
+  const r = c - stroke / 2;
+  const length = 2 * Math.PI * r;
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const seam = parts.filter((part) => part.value > 0).length > 1 ? 2 : 0;
+  const svg = svgNode('svg', {viewBox: `0 0 ${size} ${size}`, class: 'ring-svg', 'aria-hidden': 'true'});
+  svg.append(svgNode('circle', {cx: c, cy: c, r, class: 'ring-track', 'stroke-width': stroke}));
+  let offset = 0;
+  for (const part of parts) {
+    if (!part.value || !total) continue;
+    const span = (part.value / total) * length;
+    svg.append(svgNode('circle', {cx: c, cy: c, r, class: `ring-part ${part.kind}`, 'stroke-width': stroke, 'stroke-dasharray': `${Math.max(span - seam, 1)} ${length}`, 'stroke-dashoffset': -offset, transform: `rotate(-90 ${c} ${c})`}));
+    offset += span;
+  }
+  const label = total ? parts.filter((part) => part.value).map((part) => `${part.value} ${part.label || part.kind}`).join(', ') : word;
+  return h('div', {class: total ? 'ring' : 'ring empty', role: 'img', 'aria-label': label, style: {width: `${size}px`, height: `${size}px`}}, svg,
+    h('div', {class: 'ring-center'}, h('b', {text: String(figure)}), word ? h('span', {text: word}) : null));
+}
+// A 100% bar split into parts with 2px seams.
+function bar(parts) {
+  return h('div', {class: 'bar', 'aria-hidden': 'true'}, parts.filter((part) => part.value > 0).map((part) => h('span', {class: part.kind, style: {flexGrow: String(part.value)}})));
+}
+// Agent marks from the tackroom site; an agent without one gets its initial.
+const AGENT_MARKS = {
+  claude: 'a-claude-code', 'claude-code': 'a-claude-code', codex: 'a-codex', hermes: 'a-hermes', droid: 'a-droid', factory: 'a-droid',
+  pi: 'a-pi', omp: 'a-omp', qwen: 'a-qwen-code', 'qwen-code': 'a-qwen-code', opencode: 'a-opencode', amp: 'a-amp',
+  cursor: 'a-cursor', copilot: 'a-copilot', grok: 'a-grok', deepseek: 'a-deepseek',
+};
+function agentMark(name, cls = 'ag') {
+  const id = AGENT_MARKS[name];
+  return id ? icon(id, cls) : h('span', {class: `${cls} ag-letter`, 'aria-hidden': 'true', text: (name || '?')[0].toUpperCase()});
+}
+// The view's own controls sit in the top bar, left of Sync.
+function actions(...nodes) { mount(document.getElementById('view-actions'), ...nodes); }
+function chip(kind, iconId, text, title) { return h('span', {class: `chip ${kind}`, title}, icon(iconId), text); }
 function pick(object, ...keys) {
   for (const key of keys) if (object && object[key] !== undefined && object[key] !== null) return object[key];
   return undefined;
@@ -117,9 +161,9 @@ function switchControl(checked, label, onchange, disabled = false) {
   return h('label', {class: 'switch'}, input, h('span', {'aria-hidden': 'true'}));
 }
 function copyButton(text) {
-  return h('button', {class: 'icon-button quiet', type: 'button', 'aria-label': `Copy ${text}`, onclick: async (event) => {
+  return h('button', {class: 'icon-button quiet', type: 'button', 'aria-label': `Copy ${text}`, title: `Copy: ${text}`, onclick: async () => {
     try { await navigator.clipboard.writeText(text); toast('Copied to the clipboard.'); }
-    catch { const code = event.currentTarget.previousElementSibling; if (code) window.getSelection().selectAllChildren(code); toast('Select the command and copy it.'); }
+    catch { toast(text); }
   }}, icon('i-copy'));
 }
 
@@ -192,6 +236,7 @@ function renderChrome() {
   const links = pick(store.shared?.effective_ui, 'Links', 'links') || [];
   mount(document.getElementById('links'), ...links.map((link) => h('a', {href: pick(link, 'URL', 'url'), target: '_top', text: pick(link, 'Name', 'name')})));
   document.getElementById('links-menu').hidden = links.length === 0;
+  document.getElementById('scope').textContent = store.shared?.paths?.shared ? tilde(store.shared.paths.shared) : '';
 }
 
 function route() {
@@ -203,11 +248,18 @@ function route() {
     else node.removeAttribute('aria-current');
   });
   if (store.view === 'crons' && !store.crons && !store.cronsLoading) loadCrons();
+  document.getElementById('crumb').textContent = document.querySelector(`.tabs a[data-view="${store.view}"] .label`)?.textContent || '';
+  const help = document.getElementById('help');
+  help.dataset.tip = HELP[store.view];
+  help.setAttribute('aria-label', HELP[store.view]);
+  document.body.classList.remove('nav-open');
+  document.getElementById('open-nav').setAttribute('aria-expanded', 'false');
   renderView();
 }
 
 function renderView() {
   const root = document.getElementById(`view-${store.view}`);
+  actions();
   if (store.view === 'config') { renderConfig(root); return; }
   if (store.view === 'crons') { renderCrons(root); return; }
   if (!store.inv) {
@@ -219,19 +271,26 @@ function renderView() {
   ({overview: renderOverview, skills: renderSkills, roles: renderRoles, wiring: renderWiring, unmanaged: renderUnmanaged})[store.view](root);
 }
 
-function viewHead(title, lede, ...extra) {
-  return h('div', {class: 'view-head'}, h('div', {}, h('h1', {text: title}), lede ? h('p', {class: 'lede', text: lede}) : null), ...extra);
-}
+// Each view's explanation lives behind the info mark next to its title.
+const HELP = {
+  overview: 'What tackroom manages on each coding agent. The ring is linked skills; turn an agent off to stop syncing it, nothing on disk is removed.',
+  skills: 'Every canonical skill goes to every enabled agent. Each dot shows what is on disk now; Sync fixes drifted and missing links. Select a row for details.',
+  roles: 'Agent roles from agents/*.md, rendered into each agent that supports subagents.',
+  wiring: 'Which agents get each MCP server and hook. Select a dot to add or remove that agent; changes save to your config right away and Sync writes them to the agents.',
+  unmanaged: "Things in your agents' folders that tackroom did not put there. tackroom never deletes them; copy the promote command to manage one.",
+  crons: 'Scheduled jobs and services on every host in crons.hosts (tackroom.local.yaml). The CLI shows the same: tackroom cron collect --table.',
+  config: 'Shared is tackroom.yaml in your config root; Local overrides it on this machine only; Effective is what sync uses.',
+};
 
 // ---------- overview ----------
 function agentStatus(agent) {
-  if (!agent.enabled) return ['', 'off'];
-  if (!agent.inspected) return ['', 'not inspected'];
-  if (agent.error) return ['bad', 'config unreadable'];
-  if (!agent.detected) return ['', 'not installed'];
-  if (agent.pending > 0) return ['warn', `${agent.pending} pending`];
-  if (agent.synced) return ['ok', 'synced'];
-  return ['warn', 'needs sync'];
+  if (!agent.enabled) return ['', 'i-pause', 'off'];
+  if (!agent.inspected) return ['', 'i-idle', 'not inspected'];
+  if (agent.error) return ['bad', 'i-fail', 'config unreadable'];
+  if (!agent.detected) return ['', 'i-idle', 'not installed'];
+  if (agent.pending > 0) return ['warn', 'i-warn', `${agent.pending} pending`];
+  if (agent.synced) return ['ok', 'i-ok', 'synced'];
+  return ['warn', 'i-warn', 'needs sync'];
 }
 
 function renderOverview(root) {
@@ -239,75 +298,95 @@ function renderOverview(root) {
   const enabled = inv.agents.filter((agent) => agent.enabled);
   const pending = inv.agents.reduce((sum, agent) => sum + (agent.inspected ? agent.pending : 0), 0);
   const unsynced = inv.agents.filter((agent) => agent.inspected && agent.detected && !agent.error && !agent.synced).length;
-  const state = pending > 0
-    ? h('span', {class: 'pill warn', text: `${plural(pending, 'change')} waiting`})
-    : unsynced > 0 ? h('span', {class: 'pill warn', text: `${plural(unsynced, 'agent')} out of sync`}) : h('span', {class: 'pill ok', text: 'All agents synced'});
-  const stats = h('div', {class: 'stats'},
-    stat(`${enabled.length}/${inv.agents.length}`, 'agents on'),
-    stat(inv.skills.length, 'skills'),
-    stat(inv.roles.length, 'roles'),
-    stat(inv.mcp.length, 'MCP servers'),
-    stat(inv.hooks.length, 'hooks'),
-    h('div', {class: 'stat-state'}, state, h('span', {class: 'mono faint', text: `revision ${(inv.revision || '').slice(0, 10)}`})));
+  actions(
+    pending > 0 ? chip('warn', 'i-warn', `${plural(pending, 'change')} waiting`)
+      : unsynced > 0 ? chip('warn', 'i-warn', `${plural(unsynced, 'agent')} out of sync`) : chip('ok', 'i-ok', 'All synced'),
+    inv.revision ? chip('', 'i-commit', inv.revision.slice(0, 7), `Config revision ${inv.revision}`) : null);
+
+  const cronJobs = store.crons?.jobs || [];
+  const cronTrouble = cronJobs.filter(cronNeedsAttention).length;
+  const tiles = h('div', {class: 'kpis tiles'},
+    tile('i-robot', 'Agents on', `${enabled.length}/${inv.agents.length}`),
+    tile('i-skills', 'Skills', inv.skills.length, '#skills'),
+    tile('i-roles', 'Roles', inv.roles.length, '#roles'),
+    tile('i-plug', 'MCP servers', inv.mcp.length, '#wiring'),
+    tile('i-bolt', 'Hooks', inv.hooks.length, '#wiring'),
+    cronTrouble ? tile('i-crons', 'Crons failing', `${cronTrouble}/${cronJobs.length}`, '#crons', true) : tile('i-crons', 'Crons', store.crons ? cronJobs.length : '-', '#crons'));
 
   const issues = [];
   for (const agent of inv.agents.filter((item) => item.inspected)) {
-    if (agent.error) issues.push([`${agent.name}: config unreadable (${agent.error})`, '#config', 'Open config']);
-    if (agent.counts.drifted) issues.push([`${agent.name}: ${plural(agent.counts.drifted, 'drifted skill link')}`, '#skills', 'See skills']);
-    if (agent.counts.missing) issues.push([`${agent.name}: ${plural(agent.counts.missing, 'skill')} not linked yet`, '#skills', 'See skills']);
-    if (agent.counts.conflicts) issues.push([`${agent.name}: ${plural(agent.counts.conflicts, 'conflict')} with files tackroom did not write`, '#unmanaged', 'See conflicts']);
-    if (agent.root_state && agent.root_state !== 'synced') issues.push([`${agent.name}: root instructions ${agent.root_state}`, null, null]);
+    if (agent.error) issues.push(['i-fail', `${agent.name}: config unreadable`, '#config']);
+    if (agent.counts.drifted) issues.push(['i-drift', `${agent.name}: ${plural(agent.counts.drifted, 'drifted link')}`, '#skills']);
+    if (agent.counts.missing) issues.push(['i-minus', `${agent.name}: ${plural(agent.counts.missing, 'skill')} not linked`, '#skills']);
+    if (agent.counts.conflicts) issues.push(['i-warn', `${agent.name}: ${plural(agent.counts.conflicts, 'conflict')}`, '#unmanaged']);
+    if (agent.root_state && agent.root_state !== 'synced') issues.push(['i-warn', `${agent.name}: root instructions ${agent.root_state}`, null]);
   }
-  if (inv.repo_state && inv.repo_state !== 'synced') issues.unshift([`~/.agents link is ${inv.repo_state}`, null, null]);
-  const attention = h('div', {class: 'attention'},
-    h('h2', {text: 'Needs attention'}),
-    issues.length
-      ? h('ul', {}, issues.map(([text, href, label]) => h('li', {}, h('span', {text}), href ? h('a', {href, text: label}) : null)))
-      : h('p', {class: 'muted', text: inv.unmanaged.length ? `Nothing blocks sync. ${plural(inv.unmanaged.length, 'item')} in agent folders ${inv.unmanaged.length === 1 ? 'is' : 'are'} not managed by tackroom.` : 'Nothing needs attention.'}));
-
-  const cards = h('div', {class: 'cards'}, inv.agents.map(agentCard));
-  mount(root, 
-    viewHead('Agents', 'What tackroom manages on each coding agent. Turn an agent off to stop syncing it; nothing on disk is removed.'),
-    stats, attention, h('h2', {text: 'Agents'}), cards);
+  if (inv.repo_state && inv.repo_state !== 'synced') issues.unshift(['i-link', `~/.agents link is ${inv.repo_state}`, null]);
+  const attention = issues.length
+    ? h('ul', {class: 'issues'}, issues.map(([iconId, text, href]) => h('li', {}, icon(iconId), href ? h('a', {href, text}) : h('span', {text}))))
+    : null;
+  const crons = store.crons ? h('section', {class: 'block'},
+    h('div', {class: 'block-title'}, icon('i-crons'), h('h2', {}, h('a', {href: '#crons', text: 'Crons'})), cronTrouble ? h('span', {class: 'count-chip bad', title: 'Jobs that need attention', text: String(cronTrouble)}) : null),
+    h('div', {class: 'hero-grid'}, [...new Set(cronJobs.map((job) => job.host))].map((host) => hostCard(host, store.crons)), upNextCard(cronJobs))) : null;
+  mount(root, tiles, attention, h('div', {class: 'cards'}, inv.agents.map(agentCard)), crons);
 }
 
-function stat(value, label) { return h('div', {class: 'stat'}, h('b', {text: String(value)}), h('span', {text: label})); }
+function tile(iconId, label, value, href, bad = false) {
+  return h(href ? 'a' : 'div', {class: 'kpi', href}, h('span', {class: 'kpi-label'}, icon(iconId), label), h('b', {class: bad ? 'kpi-value bad' : 'kpi-value', text: String(value)}));
+}
 
 function agentCard(agent) {
-  const [kind, label] = agentStatus(agent);
+  const [kind, statusIcon, label] = agentStatus(agent);
   const local = definedLocally('agents', agent.name);
   const toggle = switchControl(agent.enabled, `${agent.name} enabled`, (event) => patch('agents', agent.name, 'enabled', event.target.checked, `${agent.name} ${event.target.checked ? 'turned on' : 'turned off'}.`));
-  const head = h('div', {class: 'card-head'}, h('div', {}, h('h3', {text: agent.name}), local ? h('span', {class: 'tag local', text: 'local'}) : null), toggle);
-  const children = [head, h('div', {}, h('span', {class: `pill ${kind}`, text: label}))];
-  if (agent.inspected && agent.detected && !agent.error) {
-    const c = agent.counts;
-    children.push(h('div', {class: 'tally'},
-      tally(c.managed, 'linked'),
-      tally(c.drifted, 'drifted', c.drifted ? 'warn' : ''),
-      tally(c.missing, 'missing', c.missing ? 'warn' : ''),
-      tally(c.unmanaged, 'unmanaged')));
-    const supports = [agent.supports_mcp ? 'MCP' : null, agent.supports_hooks ? 'hooks' : null, agent.supports_roles ? 'roles' : null].filter(Boolean);
-    children.push(h('div', {class: 'card-foot'},
-      h('span', {text: `${tokens(agent.tokens)} tokens of skill listings (est.)`}),
-      h('span', {text: supports.length ? supports.join(' · ') : 'skills only'})));
-  } else if (agent.error) {
-    children.push(h('p', {class: 'item-detail', text: agent.error}));
-  }
-  if (agent.skill_root) children.push(h('p', {class: 'path', text: tilde(agent.skill_root)}));
-  return h('article', {class: agent.enabled ? 'card' : 'card off'}, children);
+  const live = agent.inspected && agent.detected && !agent.error;
+  const c = agent.counts || {};
+  const total = store.inv.skills.length;
+  const visual = live
+    ? ring([
+      {value: c.managed, kind: 'ok', label: 'linked'},
+      {value: c.drifted, kind: 'warn', label: 'drifted'},
+      {value: c.missing, kind: 'warn', label: 'missing'},
+      {value: Math.max(0, total - c.managed - c.drifted - c.missing), kind: 'none', label: 'not linked'},
+    ], c.managed, 'skills', 76)
+    : ring([], '-', agent.enabled ? '' : 'off', 76);
+  const value = (n) => (live ? n || 0 : '-');
+  const title = [agent.error, agent.skill_root && tilde(agent.skill_root), live && `${tokens(agent.tokens)} tokens of skill listings (est.)`].filter(Boolean).join(' · ');
+  const idle = !agent.enabled || (agent.inspected && !agent.detected);
+  return h('article', {class: idle ? 'card agent off' : 'card agent'},
+    h('div', {class: 'agent-head'},
+      agentMark(agent.name, 'ag ag-card'),
+      h('div', {class: 'agent-name'},
+        h('h3', {title}, agent.name, local ? h('span', {class: 'tag local', text: 'local'}) : null),
+        h('span', {class: `status ${kind}`}, icon(statusIcon), label)),
+      toggle),
+    h('div', {class: 'agent-body'}, visual,
+      h('ul', {class: 'facts'},
+        fact('i-drift', 'Drifted', value(c.drifted), c.drifted ? 'warn' : ''),
+        fact('i-minus', 'Missing', value(c.missing), c.missing ? 'warn' : ''),
+        fact('i-unmanaged', 'Unmanaged', value(c.unmanaged)))));
 }
-function tally(value, label, kind = '') { return h('div', {class: kind}, h('b', {text: String(value || 0)}), h('span', {text: label})); }
+function fact(iconId, label, value, kind = '') { return h('li', {class: kind}, icon(iconId), h('span', {text: label}), h('b', {text: String(value)})); }
 
 // ---------- matrices ----------
 function cell(state, agent) {
-  const [glyph, word] = CELLS[state] || CELLS.unknown;
-  return h('span', {class: `cell ${state}`, title: `${agent}: ${word}`, 'aria-label': `${agent}: ${word}`, text: glyph});
+  const word = CELLS[state] || CELLS.unknown;
+  return h('span', {class: `cell ${state}`, role: 'img', title: `${agent}: ${word}`, 'aria-label': `${agent}: ${word}`});
 }
-function legend(states) {
-  return h('div', {class: 'legend'}, states.map((state) => h('span', {}, h('span', {class: `cell ${state}`, 'aria-hidden': 'true', text: CELLS[state][0]}), CELLS[state][1])));
+// How many agent cells are in each state, as a figure, a bar and a legend.
+function coverage(items, states, noun) {
+  const counts = {};
+  for (const item of items) for (const agent of columns()) { const state = item.states[agent] || 'unknown'; counts[state] = (counts[state] || 0) + 1; }
+  const n = (state) => counts[state] || 0;
+  const untargeted = (state) => ['absent', 'unsupported', 'off', 'disabled'].includes(state);
+  const targeted = Object.entries(counts).filter(([state]) => !untargeted(state)).reduce((sum, [, count]) => sum + count, 0);
+  return h('div', {class: 'coverage'},
+    h('div', {class: 'coverage-figure'}, h('b', {text: `${n('ok')}/${targeted}`}), h('span', {text: `${noun} in place`})),
+    bar([...new Set([...states, ...Object.keys(counts)])].filter((state) => !untargeted(state)).map((state) => ({kind: state, value: n(state)}))),
+    h('div', {class: 'legend'}, states.filter((state) => n(state) || ['ok', 'drift', 'missing'].includes(state)).map((state) => h('span', {}, h('span', {class: `cell ${state}`, 'aria-hidden': 'true'}), CELLS[state], h('b', {text: String(n(state))})))));
 }
 function matrixHead(lead) {
-  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col', text: name}))));
+  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col'}, h('span', {class: 'col-agent', title: name}, agentMark(name), h('span', {class: 'col-name', text: name}))))));
 }
 
 function renderSkills(root) {
@@ -333,8 +412,8 @@ function renderSkills(root) {
     const open = store.openRows.has(`skill:${skill.name}`);
     const row = h('tr', {class: 'row', tabindex: '0', 'aria-expanded': String(open), onclick: () => toggleRow(`skill:${skill.name}`), onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleRow(`skill:${skill.name}`); } }},
       h('td', {class: 'lead'},
-        h('div', {class: 'lead-title'}, skill.name, h('span', {class: 'tag', text: skill.origin})),
-        skill.description ? h('div', {class: 'lead-desc', text: skill.description}) : null),
+        h('div', {class: 'lead-title', title: skill.description || ''}, skill.name,
+          skill.origin === 'local' ? null : h('span', {class: 'tag', title: skill.origin}, icon('i-github'), skill.origin.split('@')[0]))),
       columns().map((agent) => h('td', {}, cell(skill.states[agent] || 'unknown', agent))));
     tbody.append(row);
     if (open) {
@@ -343,17 +422,15 @@ function renderSkills(root) {
         h('dl', {},
           h('dt', {text: 'origin'}), h('dd', {text: skill.origin}),
           h('dt', {text: 'path'}), h('dd', {class: 'mono', text: tilde(skill.path)}),
-          h('dt', {text: 'listing'}), h('dd', {text: `${tokens(skill.tokens)} tokens (est.)`}),
-          columns().flatMap((agent) => [h('dt', {text: agent}), h('dd', {text: (CELLS[skill.states[agent]] || CELLS.unknown)[1]})]))))));
+          h('dt', {text: 'listing'}), h('dd', {text: `${tokens(skill.tokens)} tokens (est.)`}))))));
     }
   }
   const table = rows.length
     ? h('div', {class: 'matrix-wrap'}, h('table', {class: 'matrix'}, matrixHead(`${plural(rows.length, 'skill')}`), tbody))
     : h('p', {class: 'empty', text: inv.skills.length ? 'No skills match this filter.' : 'No canonical skills yet. Add one with tackroom skill new <name>.'});
-  mount(root, 
-    viewHead('Skills', 'Every canonical skill goes to every enabled agent. Each cell shows what is on disk now; Sync fixes drifted and missing links. Select a row for details.'),
-    h('div', {class: 'toolbar'}, search, filters),
-    legend(['ok', 'drift', 'missing', 'conflict', 'absent']),
+  mount(root,
+    coverage(inv.skills, ['ok', 'drift', 'missing', 'conflict', 'absent'], 'links'),
+    h('div', {class: 'toolbar'}, h('label', {class: 'search-wrap'}, icon('i-search'), search), filters),
     table);
 }
 function toggleRow(key) {
@@ -370,21 +447,18 @@ function renderRoles(root) {
     ? h('div', {class: 'matrix-wrap'}, h('table', {class: 'matrix'}, matrixHead(plural(inv.roles.length, 'role')),
       h('tbody', {}, inv.roles.map((role) => h('tr', {}, h('td', {class: 'lead'}, h('div', {class: 'lead-title', text: role.name})), columns().map((agent) => h('td', {}, cell(role.states[agent] || 'unknown', agent))))))))
     : h('p', {class: 'empty', text: 'No agent roles are configured. Roles live in agents/*.md in your config root.'});
-  mount(root, 
-    viewHead('Roles', 'Agent roles from agents/*.md, rendered into each agent that supports subagents.'),
-    legend(['ok', 'drift', 'missing', 'unsupported']),
-    body);
+  mount(root, inv.roles.length ? coverage(inv.roles, ['ok', 'drift', 'missing', 'unsupported'], 'roles') : null, body);
 }
 
 // ---------- wiring ----------
+const EVENT_ICONS = {SessionStart: 'i-play', Stop: 'i-stop', SessionEnd: 'i-signout'};
 function renderWiring(root) {
   const inv = store.inv;
-  mount(root, 
-    viewHead('MCP & hooks', 'Choose which agents get each MCP server and hook. Select a cell to add or remove that agent. Changes save to your config right away; Sync writes them to the agents.'),
-    legend(['ok', 'missing', 'drift', 'off', 'disabled', 'unsupported']),
-    h('h2', {text: 'MCP servers'}),
+  mount(root,
+    h('div', {class: 'legend'}, ['ok', 'missing', 'drift', 'off', 'disabled', 'unsupported'].map((state) => h('span', {}, h('span', {class: `cell ${state}`, 'aria-hidden': 'true'}), CELLS[state]))),
+    h('div', {class: 'block-title'}, icon('i-plug'), h('h2', {text: 'MCP servers'}), h('span', {class: 'count-chip', text: String(inv.mcp.length)})),
     wiringTable('mcp', inv.mcp),
-    h('h2', {text: 'Hooks'}),
+    h('div', {class: 'block-title'}, icon('i-bolt'), h('h2', {text: 'Hooks'}), h('span', {class: 'count-chip', text: String(inv.hooks.length)})),
     wiringTable('hooks', inv.hooks));
 }
 function wiringTable(kind, rows) {
@@ -396,19 +470,17 @@ function wiringTable(kind, rows) {
       const local = definedLocally(section, row.name);
       const lead = h('td', {class: 'lead'}, h('div', {class: 'lead-row'},
         switchControl(row.enabled, `${row.name} enabled`, (event) => patch(section, row.name, 'enabled', event.target.checked, `${row.name} ${event.target.checked ? 'turned on' : 'turned off'}.`)),
-        h('div', {},
-          h('div', {class: 'lead-title'}, row.name,
-            row.event ? h('span', {class: 'tag', text: row.event}) : null,
-            row.explicit ? null : h('span', {class: 'tag', text: 'all agents'}),
-            local ? h('span', {class: 'tag local', text: 'local'}) : null),
-          h('div', {class: 'lead-cmd', text: row.command}))));
+        h('div', {class: 'lead-title', title: tilde(row.command || '')}, row.name,
+          row.event ? h('span', {class: 'tag'}, icon(EVENT_ICONS[row.event] || 'i-bolt'), row.event) : null,
+          row.explicit ? null : h('span', {class: 'tag', text: 'all agents'}),
+          local ? h('span', {class: 'tag local', text: 'local'}) : null)));
       const cells = columns().map((agent) => {
         const state = row.states[agent] || 'unknown';
         const targeted = !['off', 'unsupported', 'absent', 'error'].includes(state);
         const locked = ['unsupported', 'absent', 'error'].includes(state) || store.busy;
-        const [glyph, word] = CELLS[state] || CELLS.unknown;
+        const word = CELLS[state] || CELLS.unknown;
         return h('td', {}, h('button', {
-          type: 'button', class: `cell ${state}`, text: glyph, disabled: locked || undefined,
+          type: 'button', class: `cell ${state}`, disabled: locked || undefined,
           'aria-pressed': String(targeted), 'aria-label': `${row.name} on ${agent}: ${word}`,
           title: locked ? `${agent}: ${word}` : `${agent}: ${word}. Select to ${targeted ? 'remove' : 'add'} this agent.`,
           onclick: () => toggleTarget(section, supportKey, row, agent, targeted),
@@ -430,32 +502,34 @@ async function toggleTarget(section, supportKey, row, agent, targeted) {
 
 // ---------- unmanaged ----------
 const UNMANAGED_GROUPS = [
-  ['skill', 'Skills in agent folders', 'tackroom found these next to its own links and leaves them alone. Promote one to manage it from your config root.'],
-  ['conflict', 'Conflicts', 'A native file differs from what tackroom would write, so sync skips it.'],
-  ['stale', 'Stale links', 'Links into the tackroom store for skills that are no longer canonical. Sync removes them.'],
+  ['skill', 'i-unmanaged', 'Skills in agent folders', 'tackroom found these next to its own links and leaves them alone. Copy the promote command to manage one from your config root.'],
+  ['conflict', 'i-warn', 'Conflicts', 'A native file differs from what tackroom would write, so sync skips it.'],
+  ['stale', 'i-link', 'Stale links', 'Links into the tackroom store for skills that are no longer canonical. Sync removes them.'],
 ];
 function renderUnmanaged(root) {
   const items = store.inv.unmanaged;
-  const groups = UNMANAGED_GROUPS.map(([kind, title, lede]) => {
+  const groups = UNMANAGED_GROUPS.map(([kind, iconId, title, help]) => {
     const list = items.filter((item) => item.kind === kind);
     if (!list.length) return null;
-    return h('section', {class: 'group'},
-      h('div', {}, h('h2', {text: `${title} · ${list.length}`}), h('p', {class: 'muted', text: lede})),
-      h('div', {class: 'items'}, list.map((item) => h('div', {class: 'item'},
-        h('div', {class: 'item-main'},
-          h('span', {class: 'item-name', text: item.name}),
-          item.detail ? h('span', {class: 'item-detail', text: tilde(item.detail)}) : null,
-          h('div', {class: 'chips'}, item.agents.map((agent) => h('span', {class: 'tag', text: agent})))),
-        item.hint ? h('div', {class: 'hint'}, h('code', {text: tilde(item.hint)}), copyButton(tilde(item.hint))) : null))));
+    return h('section', {class: 'block'},
+      h('div', {class: 'block-title'}, icon(iconId, kind === 'conflict' ? 'bad' : ''), h('h2', {text: title}), h('span', {class: kind === 'conflict' ? 'count-chip bad' : 'count-chip', text: String(list.length)}),
+        h('span', {class: 'help', tabindex: '0', role: 'note', 'aria-label': help, dataset: {tip: help}}, icon('i-info'))),
+      h('div', {class: 'items'}, list.map((item) => {
+        const link = /symlink/.test(item.detail || '');
+        return h('div', {class: 'item'},
+          h('span', {class: 'item-icon', title: tilde(item.detail || '')}, icon(link ? 'i-link' : 'i-folder')),
+          h('span', {class: 'item-name', title: tilde(item.detail || ''), text: item.name}),
+          h('span', {class: 'chips'}, item.agents.map((agent) => h('span', {class: 'tag', title: agent, 'aria-label': agent}, agentMark(agent)))),
+          item.hint ? copyButton(tilde(item.hint)) : h('span'));
+      })));
   }).filter(Boolean);
-  mount(root, 
-    viewHead('Unmanaged', 'Things in your agents\' folders that tackroom did not put there. tackroom never deletes them.'),
-    ...(groups.length ? groups : [h('p', {class: 'empty', text: 'Everything in your agents\' skill folders is managed by tackroom.'})]));
+  mount(root, ...(groups.length ? groups : [h('p', {class: 'empty', text: 'Everything in your agents\' skill folders is managed by tackroom.'})]));
 }
 
 // ---------- crons ----------
 const CRON_OK_STATUS = new Set(['ok', 'success', 'succeeded', 'completed']);
-const CRON_ACCESS = {found: 'ok', empty: '', unreadable: 'bad', not_scanned: ''};
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const STRIP_HOURS = 24;
 
 async function loadCrons(refresh = false) {
   store.cronsLoading = true;
@@ -468,17 +542,16 @@ async function loadCrons(refresh = false) {
   }
   store.cronsLoading = false;
   renderChrome();
-  if (store.view === 'crons') renderView();
+  if (store.view === 'crons' || store.view === 'overview') renderView();
 }
-// A paused or disabled job's old error is not actionable; its own problems
-// (a missing program, miscased keys) still are not, until it is turned on.
+// A paused or disabled job's old error is not actionable until it is turned on again.
 function cronNeedsAttention(job) {
   if (['disabled', 'paused', 'not_loaded'].includes(job.state)) return false;
   return (job.problems || []).length > 0 || ['dead', 'missing'].includes(job.state);
 }
 function ago(iso) {
   const time = Date.parse(iso);
-  if (!time) return iso || '';
+  if (!time) return '';
   const minutes = Math.round((Date.now() - time) / 60000);
   if (minutes < 2) return 'just now';
   if (minutes < 90) return `${minutes} min ago`;
@@ -486,82 +559,344 @@ function ago(iso) {
   if (hours < 36) return `${hours} h ago`;
   return `${Math.round(hours / 24)} d ago`;
 }
-function cronResult(job) {
-  if (job.last_exit != null) return h('span', {class: `pill ${job.last_exit === 0 ? 'ok' : 'bad'}`, text: `exit ${job.last_exit}`});
-  if (job.last_status) return h('span', {class: `pill ${CRON_OK_STATUS.has(job.last_status) ? 'ok' : 'bad'}`, text: job.last_status});
-  return h('span', {class: 'faint', text: 'not recorded'});
+function until(ms) {
+  const minutes = Math.max(1, Math.round(ms / 60000));
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 && hours < 10 ? `in ${hours} h ${minutes % 60} min` : `in ${Math.round(minutes / 60)} h`;
 }
-function cronState(job) {
-  const kind = ['dead', 'missing'].includes(job.state) ? 'bad' : job.state === 'service' && cronNeedsAttention(job) ? 'warn' : '';
-  return h('span', {class: `pill ${kind}`, text: job.state.replace('_', ' ')});
+function clock(ms) { return new Date(ms).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'}); }
+function grouped(text) { return String(text).replace(/\d{4,}/g, (digits) => Number(digits).toLocaleString('en-US')); }
+function sentence(text) { return text ? text[0].toUpperCase() + text.slice(1) : ''; }
+
+// Cron fields: minute hour day-of-month month day-of-week, with *, lists, ranges and steps.
+function cronField(text, min, max) {
+  const values = new Set();
+  for (const part of text.split(',')) {
+    const [range, stepText] = part.split('/');
+    const step = Number(stepText || 1);
+    let [lo, hi] = range === '*' ? [min, max] : range.split('-').map(Number);
+    if (hi === undefined) hi = stepText ? max : lo;
+    if (![lo, hi, step].every(Number.isFinite) || step < 1 || lo < min || hi > max) return null;
+    for (let value = lo; value <= hi; value += step) values.add(max === 7 && value === 7 ? 0 : value);
+  }
+  return values;
+}
+function parseCron(expr) {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const spec = {m: cronField(fields[0], 0, 59), h: cronField(fields[1], 0, 23), dom: cronField(fields[2], 1, 31), mon: cronField(fields[3], 1, 12), dow: cronField(fields[4], 0, 7)};
+  if (Object.values(spec).some((value) => value === null)) return null;
+  return {...spec, domAny: fields[2] === '*', dowAny: fields[4] === '*'};
+}
+// `wall` carries the job's local time in its UTC fields.
+function cronMatches(spec, wall) {
+  if (!spec.m.has(wall.getUTCMinutes()) || !spec.h.has(wall.getUTCHours()) || !spec.mon.has(wall.getUTCMonth() + 1)) return false;
+  const dom = spec.dom.has(wall.getUTCDate());
+  const dow = spec.dow.has(wall.getUTCDay());
+  return spec.domAny || spec.dowAny ? dom && dow : dom || dow;
+}
+// Minutes east of UTC for an IANA zone or a +HH:MM offset.
+function zoneOffset(tz, at) {
+  const fixed = /^([+-])(\d\d):(\d\d)$/.exec(tz || '');
+  if (fixed) return (fixed[1] === '-' ? -1 : 1) * (Number(fixed[2]) * 60 + Number(fixed[3]));
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})
+      .formatToParts(at).map((part) => [part.type, part.value]));
+    return Math.round((Date.UTC(+parts.year, parts.month - 1, +parts.day, +parts.hour, +parts.minute) - Math.floor(at / 60000) * 60000) / 60000);
+  } catch {
+    return -at.getTimezoneOffset();
+  }
+}
+// The zone offset in ms at a time, looked up once per hour: offsets change on the hour or half hour.
+function hourlyOffset(tz) {
+  let hour = null;
+  let offset = 0;
+  return (t) => {
+    const at = Math.floor(t / 1800000);
+    if (at !== hour) { hour = at; offset = zoneOffset(tz, new Date(t)) * 60000; }
+    return offset;
+  };
+}
+// Fire times in the next STRIP_HOURS for cron and interval schedules; null for services and unknown forms.
+function cronFires(job, from) {
+  if (job.state === 'service') return null;
+  const schedule = job.schedule || '';
+  const end = from + STRIP_HOURS * 3600000;
+  const every = /^every (\d+)s$/.exec(schedule);
+  if (every) {
+    const step = Number(every[1]) * 1000;
+    const base = Date.parse(job.last_run) || from;
+    let next = base + step * Math.ceil(Math.max(0, from - base) / step);
+    const fires = [];
+    for (; next < end && fires.length < 2000; next += step) fires.push(next);
+    return {fires, interval: Number(every[1])};
+  }
+  const specs = schedule.split(';').map(parseCron);
+  if (!specs.length || specs.some((spec) => !spec)) return null;
+  const start = Math.ceil(from / 60000) * 60000;
+  const offset = hourlyOffset(job.tz);
+  const fires = [];
+  for (let t = start; t < end; t += 60000) {
+    const wall = new Date(t + offset(t));
+    if (specs.some((spec) => cronMatches(spec, wall))) fires.push(t);
+  }
+  return {fires};
+}
+// Runs more often than every 30 minutes read as a band, not as single runs.
+function dense({fires, interval}) { return interval ? interval < 1800 : fires.length > 48; }
+// The first fire within a week, for jobs that do not run in the next STRIP_HOURS.
+function nextFire(job, from) {
+  const specs = (job.schedule || '').split(';').map(parseCron);
+  if (!specs.length || specs.some((spec) => !spec)) return null;
+  const start = Math.ceil(from / 60000) * 60000;
+  const offset = hourlyOffset(job.tz);
+  for (let t = start; t < start + 8 * 86400000; t += 60000) {
+    if (specs.some((spec) => cronMatches(spec, new Date(t + offset(t))))) return t;
+  }
+  return null;
+}
+function weekdayClock(ms) { return `${DAY_NAMES[new Date(ms).getDay()]} ${clock(ms)}`; }
+function duration(seconds) {
+  if (seconds % 3600 === 0) return seconds === 3600 ? 'hour' : `${seconds / 3600} h`;
+  if (seconds % 60 === 0) return seconds === 60 ? 'minute' : `${seconds / 60} min`;
+  return `${seconds} s`;
+}
+function describeSchedule(job) {
+  const schedule = job.schedule || '';
+  if (job.state === 'service') return 'Always on';
+  const every = /^every (\d+)s$/.exec(schedule);
+  if (every) return `Every ${duration(Number(every[1]))}`;
+  const lines = schedule.split(';').map((line) => line.trim().split(/\s+/));
+  if (!lines.length || lines.some((fields) => fields.length !== 5)) return schedule;
+  const zone = zoneOffset(job.tz, new Date()) === -new Date().getTimezoneOffset() ? '' : ` (${job.tz})`;
+  const [m, hr, dom, mon, dow] = lines[0];
+  const step = /^\*\/(\d+)$/.exec(m);
+  if (lines.length === 1 && step && hr === '*' && dom === '*' && mon === '*' && dow === '*') return `Every ${step[1]} min`;
+  const sameTime = lines.every((fields) => fields[0] === m && fields[1] === hr && fields[2] === '*' && fields[3] === '*');
+  if (!sameTime || !/^\d+$/.test(m) || !/^\d+$/.test(hr)) return schedule;
+  const time = `${hr.padStart(2, '0')}:${m.padStart(2, '0')}`;
+  const days = new Set();
+  for (const fields of lines) {
+    const set = cronField(fields[4], 0, 7);
+    if (!set) return schedule;
+    set.forEach((day) => days.add(day));
+  }
+  if (days.size === 7) return `Daily ${time}${zone}`;
+  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return `Weekdays ${time}${zone}`;
+  const order = [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  return `${order.map((day) => DAY_NAMES[day]).join(', ')} ${time}${zone}`;
+}
+const PAUSED = ['disabled', 'paused', 'not_loaded'];
+const SOURCE_ICONS = {launchd: 'i-launchd', crontab: 'i-crontab', systemd: 'i-gear', hermes: 'a-hermes', codex: 'a-codex', 'claude-desktop': 'a-claude-code', 'claude-cloud': 'a-claude-code', openbot: 'i-robot'};
+const HEALTH = {ok: ['i-ok', 'Healthy'], idle: ['i-idle', 'No result'], warn: ['i-warn', 'Last run failed'], fail: ['i-fail', 'Failing'], paused: ['i-pause', 'Paused']};
+const HEALTH_ORDER = ['ok', 'idle', 'warn', 'fail', 'paused'];
+function jobHealth(job) {
+  if (PAUSED.includes(job.state)) return 'paused';
+  if (cronNeedsAttention(job)) return 'fail';
+  if (job.last_exit != null) return job.last_exit === 0 ? 'ok' : 'warn';
+  if (job.last_status) return CRON_OK_STATUS.has(job.last_status) ? 'ok' : 'warn';
+  return job.state === 'service' ? 'ok' : 'idle';
+}
+function sourceIcon(job) { return icon(SOURCE_ICONS[job.source] || 'i-crons', 'src-icon'); }
+// launchd labels are reverse-DNS: com.vendor.name reads as name.
+const LABEL_ROOTS = new Set(['com', 'org', 'net', 'io', 'ai', 'sh', 'dev', 'me', 'app', 'co']);
+function shortName(job) {
+  const name = job.name || job.id;
+  const parts = name.split('.');
+  if (job.source !== 'launchd' || !LABEL_ROOTS.has(parts[0]) || parts.length < 2) return name;
+  return parts.slice(parts.length > 2 ? 2 : 1).join('.');
+}
+function compact(n) { return n >= 10000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : n.toLocaleString('en-US'); }
+// The kind of trouble as [icon, label, short detail].
+function problemKind(job) {
+  const problems = job.problems || [];
+  const first = problems[0] || '';
+  let match = /crash loop: KeepAlive restarted it (\d+) times, last exit (-?\d+)/.exec(first);
+  if (match) return ['i-loop', 'Crash loop', `${compact(Number(match[1]))} restarts · exit ${match[2]}`];
+  const missing = problems.filter((problem) => problem.startsWith('path does not exist: '));
+  if (missing.length) return ['i-file-x', 'Missing file', missing.map((problem) => problem.split('/').pop()).join(', ')];
+  if (first.includes('has not run')) return ['i-alarm', 'Missed run', job.last_run ? `last ran ${ago(job.last_run)}` : 'never ran'];
+  if (first.startsWith('last error: ')) {
+    const text = first.slice(12).replace(/^\[[^\]]*\]\s*/, '');
+    const auth = /credential|auth/i.test(text);
+    return [auth ? 'i-key' : 'i-fail', auth ? 'Auth error' : 'Run failed', text.split(/[:.]/)[0].trim()];
+  }
+  match = /^last exit (-?\d+)/.exec(first);
+  if (match) return ['i-fail', 'Exited', `exit ${match[1]}`];
+  return ['i-warn', sentence(job.state), sentence(first)];
 }
 function cronKey(job) { return `cron:${job.host}/${job.source}/${job.id}`; }
+function hostName(host) { return host === 'local' ? 'This Mac' : host; }
+function openCron(job) {
+  store.cronFilter = 'all';
+  store.openRows.add(cronKey(job));
+  renderView();
+  document.getElementById(cronKey(job))?.scrollIntoView({block: 'center'});
+}
 
 function renderCrons(root) {
   const data = store.crons;
-  const refresh = h('button', {type: 'button', disabled: store.cronsLoading || undefined, onclick: () => loadCrons(true), text: store.cronsLoading ? 'Collecting…' : 'Collect again'});
-  const collected = data ? h('span', {class: 'mono faint', text: `collected ${new Date(data.scanned_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`}) : null;
-  const head = viewHead('Crons', 'Scheduled jobs on every host in crons.hosts: launchd, crontab, systemd timers, and the Hermes, Codex and Claude desktop schedulers. Failing KeepAlive services are listed too. Read-only: tackroom never changes a job.',
-    h('div', {class: 'toolbar'}, collected, refresh));
+  actions(
+    data ? h('span', {class: 'stamp', title: `Collected ${new Date(Date.parse(data.scanned_at)).toLocaleString()}`}, icon('i-crontab'), clock(Date.parse(data.scanned_at))) : null,
+    h('button', {type: 'button', class: store.cronsLoading ? 'icon-button spinning' : 'icon-button', disabled: store.cronsLoading || undefined, 'aria-label': 'Collect again', title: store.cronsLoading ? 'Collecting…' : 'Collect again', onclick: () => loadCrons(true)}, icon('i-refresh')));
   if (!data) {
-    mount(root, head, store.cronsError
-      ? h('div', {class: 'error-box'}, h('strong', {text: 'Could not collect scheduled jobs. '}), store.cronsError)
-      : h('p', {class: 'loading', text: 'Collecting scheduled jobs. SSH hosts can take a few seconds.'}));
+    if (store.cronsError) {
+      mount(root, h('div', {class: 'error-box'}, h('strong', {text: 'Could not collect scheduled jobs. '}), store.cronsError, ' ', h('button', {type: 'button', class: 'quiet', onclick: () => loadCrons(true), text: 'Retry'})));
+      return;
+    }
+    // The final layout with its figures still empty, so nothing moves when the data lands.
+    const waiting = (iconId, title) => h('section', {class: 'hero-card'}, h('div', {class: 'hero-head'}, icon(iconId), h('h2', {text: title})), h('div', {class: 'host-body'}, ring([], '-', 'jobs'), h('p', {class: 'muted', text: 'Collecting…'})));
+    mount(root, h('div', {class: 'hero-grid'}, waiting('i-laptop', 'This Mac'), waiting('i-laptop', 'Hosts'), waiting('i-timer', 'Up next')));
     return;
   }
   const jobs = data.jobs || [];
-  const attention = jobs.filter(cronNeedsAttention);
-  const hosts = [...new Set([...jobs.map((job) => job.host), ...(data.access || []).map((entry) => entry.host)])];
-  const stats = h('div', {class: 'stats'},
-    stat(jobs.filter((job) => job.state !== 'service').length, 'scheduled jobs'),
-    stat(jobs.filter((job) => job.state === 'service').length, 'failing services'),
-    stat(hosts.length, hosts.length === 1 ? 'host' : 'hosts'),
-    h('div', {class: 'stat-state'}, attention.length
-      ? h('span', {class: 'pill bad', text: `${plural(attention.length, 'job')} need${attention.length === 1 ? 's' : ''} attention`})
-      : h('span', {class: 'pill ok', text: 'Nothing failing'})));
-  const issues = h('div', {class: 'attention'},
-    h('h2', {text: 'Needs attention'}),
-    attention.length
-      ? h('ul', {}, attention.map((job) => h('li', {},
-        h('span', {}, h('b', {text: `${job.host} · ${job.name || job.id}`}), ` ${(job.problems || [job.state])[0]}`),
-        h('a', {href: '#crons', text: 'Details', onclick: (event) => { event.preventDefault(); store.openRows.add(cronKey(job)); store.cronFilter = 'all'; renderView(); document.getElementById(cronKey(job))?.scrollIntoView({block: 'center'}); }}))))
-      : h('p', {class: 'muted', text: 'Every job that should run did, and nothing is crash-looping.'}));
-  const filters = segmented([['all', 'All'], ['attention', 'Needs attention']], store.cronFilter, (value) => { store.cronFilter = value; renderView(); });
-  const sections = hosts.map((host) => {
-    const access = (data.access || []).filter((entry) => entry.host === host);
-    const rows = jobs.filter((job) => job.host === host && (store.cronFilter === 'all' || cronNeedsAttention(job)));
-    const chips = h('div', {class: 'chips'}, access.map((entry) => h('span', {class: `pill ${CRON_ACCESS[entry.state] ?? ''}`, title: entry.detail || entry.state, text: `${entry.source} · ${entry.state === 'found' ? entry.jobs : entry.state.replace('_', ' ')}`})));
-    return h('section', {class: 'group'}, h('h2', {text: host === 'local' ? 'This machine' : host}), chips,
-      rows.length ? cronTable(rows) : h('p', {class: 'muted', text: store.cronFilter === 'all' ? 'No scheduled jobs found here.' : 'Nothing needs attention here.'}));
-  });
-  mount(root, head, stats, issues, h('div', {class: 'toolbar'}, filters), ...sections,
-    h('p', {class: 'faint', text: 'Add SSH hosts with crons.hosts in tackroom.local.yaml, for example hosts: [local, laptop]. Same data from the CLI: tackroom cron collect --table.'}));
+  const hosts = [...new Set([...(data.access || []).map((entry) => entry.host), ...jobs.map((job) => job.host)])];
+  const attention = jobs.filter(cronNeedsAttention).sort((a, b) => (Date.parse(b.last_run) || 0) - (Date.parse(a.last_run) || 0));
+  mount(root,
+    h('div', {class: 'hero-grid'}, hosts.map((host) => hostCard(host, data)), upNextCard(jobs)),
+    attention.length ? h('section', {class: 'block'},
+      h('div', {class: 'block-title'}, icon('i-warn', 'bad'), h('h2', {text: 'Needs attention'}), h('span', {class: 'count-chip bad', text: String(attention.length)})),
+      h('div', {class: 'alert-grid'}, attention.map(alertCard))) : null,
+    fireStrip(jobs, hosts),
+    jobsBlock(jobs, hosts));
 }
-function cronTable(rows) {
+function hostCard(host, data) {
+  const access = (data.access || []).filter((entry) => entry.host === host);
+  const unreachable = access.length > 0 && access.every((entry) => entry.state === 'not_scanned') && access.some((entry) => (entry.detail || '').startsWith('probe failed'));
+  const jobs = data.jobs.filter((job) => job.host === host);
+  const counts = Object.fromEntries(HEALTH_ORDER.map((kind) => [kind, 0]));
+  jobs.forEach((job) => { counts[jobHealth(job)] += 1; });
+  const sources = access.filter((entry) => entry.state === 'found' || entry.state === 'unreadable');
+  return h('section', {class: 'hero-card'},
+    h('div', {class: 'hero-head'}, icon('i-laptop'), h('h2', {text: hostName(host)}), unreachable ? h('span', {class: 'pill bad', title: access[0].detail, text: 'unreachable'}) : null),
+    h('div', {class: 'host-body'},
+      ring(HEALTH_ORDER.map((kind) => ({kind, value: counts[kind], label: HEALTH[kind][1].toLowerCase()})), jobs.length, 'jobs'),
+      h('ul', {class: 'health-list'}, HEALTH_ORDER.filter((kind) => counts[kind]).map((kind) => h('li', {class: kind}, icon(HEALTH[kind][0]), h('span', {text: HEALTH[kind][1]}), h('b', {text: String(counts[kind])}))))),
+    h('div', {class: 'source-row'}, sources.map((entry) => h('span', {class: entry.state === 'unreadable' ? 'src bad' : 'src', title: `${entry.source}: ${entry.state === 'found' ? plural(entry.jobs, 'job') : entry.detail || entry.state}`},
+      icon(SOURCE_ICONS[entry.source] || 'i-crons'), entry.source, h('b', {text: entry.state === 'found' ? String(entry.jobs) : '!'})))));
+}
+function upNextCard(jobs) {
+  const now = Date.now();
+  const queue = [];
+  for (const job of jobs) {
+    if (PAUSED.includes(job.state) || job.state === 'service') continue;
+    const fires = cronFires(job, now);
+    if (fires && dense(fires)) continue;
+    const next = fires?.fires?.[0] ?? nextFire(job, now);
+    if (next) queue.push({job, next});
+  }
+  queue.sort((a, b) => a.next - b.next);
+  const [first, ...rest] = queue;
+  const when = (t) => (t - now < 86400000 ? clock(t) : weekdayClock(t));
+  return h('section', {class: 'hero-card'},
+    h('div', {class: 'hero-head'}, icon('i-timer'), h('h2', {text: 'Up next'})),
+    first
+      ? h('div', {class: 'upnext-lead', title: `${first.job.name || first.job.id} · ${hostName(first.job.host)} · ${when(first.next)}`},
+        h('b', {class: 'upnext-in', text: until(first.next - now).replace(/^in /, '')}),
+        h('span', {class: 'upnext-name'}, sourceIcon(first.job), shortName(first.job), h('span', {class: 'faint', text: hostName(first.job.host)})))
+      : h('p', {class: 'muted', text: 'Nothing scheduled this week.'}),
+    rest.length ? h('ul', {class: 'upnext-list'}, rest.slice(0, 4).map(({job, next}) => h('li', {title: `${job.name || job.id} · ${hostName(job.host)}`},
+      h('span', {class: 'fig', text: when(next)}), sourceIcon(job), h('span', {class: 'upnext-job', text: shortName(job)}), h('span', {class: 'faint', text: hostName(job.host)})))) : null);
+}
+function alertCard(job) {
+  const [iconId, label, detail] = problemKind(job);
+  const stale = iconId === 'i-alarm' && Date.now() - (Date.parse(job.last_run) || 0) > 7 * 86400000;
+  return h('button', {type: 'button', class: stale ? 'alert-card stale' : 'alert-card', title: `${job.name || job.id}\n${(job.problems || []).map((problem) => sentence(grouped(problem))).join('\n')}`, onclick: () => openCron(job)},
+    h('span', {class: 'alert-top'}, icon(iconId, 'alert-icon'), h('span', {text: label}), h('span', {class: 'alert-ago', text: job.last_run ? ago(job.last_run) : ''})),
+    h('span', {class: 'alert-name', text: shortName(job)}),
+    h('span', {class: 'alert-meta'}, icon('i-laptop'), h('span', {text: hostName(job.host)}), detail ? h('span', {class: 'alert-detail', text: detail}) : null));
+}
+function fireStrip(jobs, hosts) {
+  const now = Date.now();
+  const rows = [];
+  for (const host of hosts) {
+    for (const job of jobs.filter((item) => item.host === host && !PAUSED.includes(item.state))) {
+      const fires = cronFires(job, now);
+      if (fires) rows.push({job, ...fires});
+    }
+  }
+  rows.sort((a, b) => (a.job.host === b.job.host ? (a.fires[0] ?? Infinity) - (b.fires[0] ?? Infinity) : hosts.indexOf(a.job.host) - hosts.indexOf(b.job.host)));
+  const span = STRIP_HOURS * 3600000;
+  const at = (t) => `${(((t - now) / span) * 100).toFixed(3)}%`;
+  const firstHour = Math.ceil(now / 3600000) * 3600000;
+  const ticks = [];
+  for (let t = firstHour; t < now + span; t += 3600000) if (new Date(t).getHours() % 3 === 0) ticks.push(t);
+  const axis = h('div', {class: 'strip-row strip-axis'}, h('span', {class: 'strip-label'}),
+    h('div', {class: 'strip-track'}, h('span', {class: 'strip-now', style: {left: '0'}, text: `Now ${clock(now)}`}), ticks.filter((t) => t - now > 2 * 3600000).map((t) => h('span', {class: t - now < 7 * 3600000 || new Date(t).getHours() % 6 ? 'strip-hour minor' : 'strip-hour', style: {left: at(t)}, text: clock(t)}))));
+  const body = rows.map(({job, fires, interval}) => {
+    const band = dense({fires, interval});
+    const many = !band && fires.length > 24;
+    const later = fires.length ? null : nextFire(job, now);
+    const track = h('div', {class: 'strip-track', title: `${describeSchedule(job)}${fires[0] ? `, next ${clock(fires[0])}` : ''}`},
+      ticks.map((t) => h('span', {class: 'strip-grid', style: {left: at(t)}})),
+      band
+        ? h('span', {class: 'strip-band', style: {left: at(fires[0] ?? now), right: '0'}})
+        : fires.map((t) => h('span', {class: 'strip-fire', style: {left: at(t)}})),
+      many ? h('span', {class: 'strip-band alt', style: {left: at(fires[0]), right: '0'}}) : null,
+      fires.length ? null : h('span', {class: 'strip-later', text: later ? `→ ${weekdayClock(later)}` : 'not this week'}));
+    return h('div', {class: ['strip-row', cronNeedsAttention(job) && 'trouble', many && 'many'].filter(Boolean).join(' ')},
+      h('span', {class: 'strip-label', title: `${job.name || job.id} · ${hostName(job.host)} · ${describeSchedule(job)}`}, sourceIcon(job), h('span', {class: 'strip-name', text: shortName(job)}), hosts.length > 1 ? h('span', {class: 'strip-host', text: hostName(job.host)}) : null),
+      track);
+  });
+  return h('section', {class: 'block'},
+    h('div', {class: 'block-title'}, icon('i-crons'), h('h2', {text: 'Next 24 hours'}), h('span', {class: 'count-chip', text: String(rows.length)})),
+    h('div', {class: 'panel-block strip'}, h('div', {class: 'block-body'}, axis, ...body)));
+}
+function jobsBlock(jobs, hosts) {
+  const healthCount = (kind) => jobs.filter((job) => jobHealth(job) === kind).length;
+  const filters = [
+    ['all', null, 'All', jobs.length],
+    ...(hosts.length > 1 ? hosts.map((host) => [`host:${host}`, 'i-laptop', hostName(host), jobs.filter((job) => job.host === host).length]) : []),
+    ['health:fail', 'i-fail', 'Failing', healthCount('fail')],
+    ['health:paused', 'i-pause', 'Paused', healthCount('paused')],
+  ].filter(([value, , , count]) => value === 'all' || count > 0);
+  const current = filters.some(([value]) => value === store.cronFilter) ? store.cronFilter : 'all';
+  const [kind, value] = current.split(':');
+  const rows = jobs.filter((job) => (kind === 'host' ? job.host === value : kind === 'health' ? jobHealth(job) === value : true));
+  return h('section', {class: 'block'},
+    h('div', {class: 'block-title'}, icon('i-launchd'), h('h2', {text: 'Jobs'}),
+      h('div', {class: 'filter-chips', role: 'group', 'aria-label': 'Filter jobs'}, filters.map(([option, iconId, label, count]) => h('button', {type: 'button', class: 'chip-button', 'aria-pressed': String(option === current), onclick: () => { store.cronFilter = option; renderView(); }},
+        iconId ? icon(iconId) : null, label, h('span', {class: 'chip-count', text: String(count)}))))),
+    h('div', {class: 'panel-block'}, cronTable(rows, hosts.length > 1)));
+}
+function cronTable(rows, showHost) {
+  const now = Date.now();
   const tbody = h('tbody', {});
+  const width = showHost ? 7 : 6;
   for (const job of rows) {
     const key = cronKey(job);
     const open = store.openRows.has(key);
     const toggle = () => toggleRow(key);
-    tbody.append(h('tr', {id: key, class: cronNeedsAttention(job) ? 'row trouble' : 'row', tabindex: '0', 'aria-expanded': String(open), onclick: toggle, onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }},
-      h('td', {class: 'lead'},
-        h('div', {class: 'lead-title'}, job.name || job.id, h('span', {class: 'tag', text: job.source})),
-        job.name && job.name !== job.id ? h('div', {class: 'lead-cmd', text: job.id}) : null),
-      h('td', {class: 'mono', text: job.schedule || ''}),
-      h('td', {}, cronState(job)),
-      h('td', {title: job.last_run || '', text: job.last_run ? ago(job.last_run) : ''}),
-      h('td', {}, cronResult(job)),
-      h('td', {class: 'num', text: job.runs != null ? String(job.runs) : ''})));
+    const next = cronFires(job, now)?.fires?.[0];
+    const health = jobHealth(job);
+    const paused = health === 'paused';
+    const schedule = describeSchedule(job);
+    const later = !paused && !next && job.state !== 'service' ? nextFire(job, now) : null;
+    const nextText = paused ? 'Paused' : next ? until(next - now) : later ? weekdayClock(later) : '-';
+    const lastText = job.last_run ? ago(job.last_run) : '-';
+    const result = job.last_exit != null ? `exit ${job.last_exit}` : job.last_status ? job.last_status.replace('_', ' ') : '';
+    tbody.append(h('tr', {id: key, class: `row ${health}`, tabindex: '0', 'aria-expanded': String(open), onclick: toggle, onkeydown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle(); } }},
+      h('td', {class: 'status-cell', title: [HEALTH[health][1], result].filter(Boolean).join(' · ')}, icon(HEALTH[health][0], `health ${health}`), h('span', {class: 'sr', text: HEALTH[health][1]})),
+      h('td', {class: 'ident'},
+        h('span', {class: 'ident-name', title: job.name || job.id}, sourceIcon(job), h('span', {text: shortName(job)})),
+        h('span', {class: 'ident-phone', text: `${schedule} · ${nextText === '-' ? `ran ${lastText}` : nextText}`})),
+      showHost ? h('td', {class: 'muted nowrap', text: hostName(job.host)}) : null,
+      h('td', {class: 'nowrap', title: job.schedule || '', text: schedule}),
+      h('td', {class: paused ? 'faint nowrap fig' : 'nowrap fig', title: next ? new Date(next).toLocaleString() : '', text: nextText}),
+      h('td', {class: 'muted nowrap fig', title: job.last_run || '', text: lastText}),
+      h('td', {class: 'num', text: job.runs != null ? compact(job.runs) : '-'})));
     if (open) {
-      const fields = [['id', job.id], ['command', job.command], ['log', job.log && tilde(job.log)], ['time zone', job.tz], ['created by', job.created_by], ['connectors', (job.connectors || []).join(', ')], ['effect', job.effect], ['last run', job.last_run], ['inferred', (job.inferred || []).join(', ')]]
-        .filter(([, value]) => value);
-      tbody.append(h('tr', {class: 'detail'}, h('td', {colspan: '6'}, h('div', {class: 'detail-grid'},
-        (job.problems || []).length ? h('ul', {class: 'problems'}, job.problems.map((problem) => h('li', {text: problem}))) : null,
-        h('dl', {}, fields.flatMap(([label, value]) => [h('dt', {text: label}), h('dd', {class: label === 'command' || label === 'log' ? 'mono' : '', text: value})]))))));
+      const fields = [['Result', result], ['ID', job.id], ['Command', job.command], ['Log', job.log && tilde(job.log)], ['Schedule', job.schedule], ['Time zone', job.tz], ['Last run', job.last_run], ['Created by', job.created_by], ['Connectors', (job.connectors || []).join(', ')], ['Effect', job.effect], ['Inferred', (job.inferred || []).join(', ')]]
+        .filter(([, field]) => field);
+      tbody.append(h('tr', {class: 'detail'}, h('td', {colspan: String(width)}, h('div', {class: 'detail-grid'},
+        (job.problems || []).length ? h('ul', {class: 'problems'}, job.problems.map((problem) => h('li', {text: sentence(grouped(problem))}))) : null,
+        h('dl', {}, fields.flatMap(([label, field]) => [h('dt', {text: label}), h('dd', {class: ['ID', 'Command', 'Log', 'Schedule'].includes(label) ? 'code' : '', text: field})]))))));
     }
   }
-  return h('div', {class: 'matrix-wrap'}, h('table', {class: 'matrix jobs'},
-    h('thead', {}, h('tr', {}, ['Job', 'Schedule', 'State', 'Last run', 'Result', 'Runs'].map((label, i) => h('th', {class: i === 0 ? 'lead' : '', scope: 'col', text: label})))),
+  if (!rows.length) tbody.append(h('tr', {}, h('td', {colspan: String(width), class: 'muted', text: 'No jobs match.'})));
+  return h('div', {class: 'block-body'}, h('table', {class: 'grid-table jobs'},
+    h('thead', {}, h('tr', {}, [['', 'status-cell'], ['Job', ''], showHost ? ['Host', ''] : null, ['Schedule', ''], ['Next run', ''], ['Last run', ''], ['Runs', 'num']].filter(Boolean).map(([label, cls]) => h('th', {scope: 'col', class: cls, text: label, 'aria-label': label || 'Status'})))),
     tbody));
 }
 
@@ -577,6 +912,7 @@ async function loadConfigLayer(layer) {
   renderView();
 }
 function renderConfig(root) {
+  actions(segmented([['shared', 'Shared'], ['local', 'Local'], ['effective', 'Effective']], store.configLayer, (value) => loadConfigLayer(value)));
   const state = store.configState;
   if (!state || state.active_layer !== store.configLayer) {
     if (store.configNote) {
@@ -594,22 +930,20 @@ function renderConfig(root) {
   const editor = h('textarea', {class: 'editor', id: `editor-${layer}`, spellcheck: 'false', 'aria-label': `${layer} YAML`, readonly: readOnly || undefined, oninput: (event) => {
     store.drafts[layer] = event.target.value;
     store.configDiff = '';
-    actions.querySelectorAll('[data-dirty]').forEach((node) => { node.disabled = event.target.value === original; });
+    buttons.querySelectorAll('[data-dirty]').forEach((node) => { node.disabled = event.target.value === original; });
   }});
   editor.value = draft;
   const dirty = draft !== original;
-  const actions = h('div', {class: 'editor-actions'},
+  const buttons = h('div', {class: 'editor-actions'},
     h('button', {type: 'button', dataset: {dirty: '1'}, disabled: readOnly || !dirty || undefined, onclick: () => validateConfig(layer), text: 'Check changes'}),
     h('button', {type: 'button', class: 'primary', dataset: {dirty: '1'}, disabled: readOnly || !dirty || undefined, onclick: () => saveConfig(layer), text: 'Save'}),
     h('button', {type: 'button', class: 'quiet', dataset: {dirty: '1'}, disabled: readOnly || !dirty || undefined, onclick: () => { delete store.drafts[layer]; store.configDiff = ''; store.configNote = ''; renderView(); }, text: 'Discard'}),
     store.configNote ? h('span', {class: 'note', text: store.configNote}) : null);
   const path = layer === 'effective' ? 'merge of both files' : tilde(state.paths?.[layer] || '');
-  mount(root, 
-    viewHead('Config', 'Your canonical config. Shared is tackroom.yaml in your config root; Local overrides it on this machine only; Effective is what sync uses.',
-      segmented([['shared', 'Shared'], ['local', 'Local'], ['effective', 'Effective']], layer, (value) => loadConfigLayer(value))),
-    h('div', {class: 'config-meta'}, h('span', {text: path}), state.revision ? h('span', {text: `revision ${state.revision.slice(0, 12)}`}) : null, readOnly ? h('span', {text: 'read-only'}) : null),
+  mount(root,
+    h('div', {class: 'config-meta'}, h('span', {}, icon('i-folder'), path), state.revision ? h('span', {}, icon('i-commit'), state.revision.slice(0, 12)) : null, readOnly ? h('span', {text: 'read-only'}) : null),
     editor,
-    readOnly ? null : actions,
+    readOnly ? null : buttons,
     store.configDiff ? renderDiff(store.configDiff) : null);
 }
 function renderDiff(text) {
@@ -673,7 +1007,7 @@ function renderPlan() {
       if (report.RootState && report.RootState !== 'synced') items.push([report.RootState === 'missing' ? 'add' : 'update', `root instructions (${report.RootState})`]);
       if (!items.length) items.push(['note', report.Synced ? 'up to date' : 'refresh native config']);
     }
-    body.push(h('div', {class: 'plan-agent'}, h('h3', {text: report.Name}), h('ul', {}, items.map(([verb, text]) => h('li', {}, h('span', {class: `verb ${verb}`, text: verb}), h('span', {text}))))));
+    body.push(h('div', {class: 'plan-agent'}, h('h3', {}, agentMark(report.Name), report.Name), h('ul', {}, items.map(([verb, text]) => h('li', {}, h('span', {class: `verb ${verb}`, text: verb}), h('span', {text}))))));
   }
   const destructive = plan.destructive || [];
   if (destructive.length) {
@@ -724,6 +1058,11 @@ document.addEventListener('click', (event) => {
   const menu = document.getElementById('links-menu');
   if (menu.open && !menu.contains(event.target)) menu.open = false;
 });
+document.getElementById('open-nav').addEventListener('click', (event) => {
+  const open = document.body.classList.toggle('nav-open');
+  event.currentTarget.setAttribute('aria-expanded', String(open));
+});
 window.addEventListener('hashchange', route);
 route();
 refresh();
+loadCrons();
