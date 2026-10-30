@@ -1,31 +1,32 @@
-/* Achromatic ledger. Open-plane shell: a 256px labelled sidebar on a blue-grey ledger ground, no top bar (a breadcrumb row instead), white panels with a 1px edge.
-   Ink chrome with a near-black primary; the one hue, #1d5fbf, goes only on the run marks of "Next 24 hours". Grid: 256 + fluid canvas, 32px gutter, one 12px gap. */
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
-@font-face { font-family: "Geist Mono"; src: url("./fonts/geist-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+/* Framed sheet. One stone-grey L-frame (the tack room's leather and wood, kept near-neutral) holds a 228px sidebar and a 48px top bar with no rule between them;
+   the work sits on a white sheet inset 8px from the right and bottom edges, 16px corners, a 1px edge and no shadow. Teal #1b6c80 marks the runs and the 2px underline of the selected tab.
+   Grid: 228 + sheet; 24px sheet padding; one 24px gap. */
+@font-face { font-family: "IBM Plex Sans"; src: url("./fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("./fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("./fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600 700; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 :root {
   color-scheme: light;
-  --app-bg: #f2f4f7; --side-bg: #f2f4f7; --top-bg: transparent; --canvas-bg: transparent;
-  --surface: #ffffff; --raised: #f4f5f7; --active: #e3e6ea;
-  --border: #e3e6ea; --rule: #eef0f2; --control: #cfd3d8;
-  --text: #0a0a0a; --muted: #565a61; --faint: #63676e;
-  --primary: #141414; --primary-ink: #ffffff; --focus: #1d5fbf;
-  --data: #1d5fbf; --switch-on: #141414;
-  --positive: #2e7d32; --negative: #c4242a; --warning: #92400e;
+  --app-bg: #f4f4f2; --side-bg: #f4f4f2; --top-bg: #f4f4f2; --canvas-bg: #ffffff;
+  --surface: #ffffff; --raised: #f7f7f5; --active: #e9e9e6;
+  --border: #e8e8e5; --rule: #f0f0ee; --control: #cdcdc9;
+  --text: #131416; --muted: #55575a; --faint: #626467;
+  --primary: #131416; --primary-ink: #ffffff; --focus: #1b6c80;
+  --data: #1b6c80; --switch-on: #131416;
+  --positive: #1e7b4f; --negative: #c4242a; --warning: #92400e;
   --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
   --pill-negative-bg: #ffedea; --pill-negative-ink: #831c1e;
   --pill-warning-bg: #fffbeb; --pill-warning-ink: #92400e;
-  --pill-neutral-bg: #eeeff1; --pill-neutral-ink: #3d3d3d;
-  --code-bg: #111214; --code-text: #e8e9eb;
-  --float-shadow: 0 8px 24px rgba(10, 10, 10, .08);
+  --pill-neutral-bg: #ebedee; --pill-neutral-ink: #353736;
+  --code-bg: #15171a; --code-text: #e7e8ea;
+  --float-shadow: 0 8px 24px rgba(19, 20, 22, .08);
   --radius-card: 8px; --radius-control: 6px; --radius-chip: 4px;
-  --gap: 12px; --pad: 32px; --card-pad: 20px;
-  --row-height: 44px; --control-height: 36px; --sidebar-width: 256px;
-  --font: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --gap: 24px; --pad: 24px; --card-pad: 20px;
+  --row-height: 48px; --control-height: 32px; --sidebar-width: 228px;
+  --font: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --figure-font: var(--font);
-  --fs-title: 24px; --fs-section: 16px; --fs-kpi: 30px; --fs-body: 14px; --fs-small: 12px; --kpi-weight: 400;
+  --fs-title: 22px; --fs-section: 16px; --fs-kpi: 28px; --fs-body: 14px; --fs-small: 12px; --kpi-weight: 400;
 }
 
 /* ---------- base ---------- */
@@ -351,7 +352,15 @@ button.cell:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } button:active:not(:disabled) { transform: none; } }
 
 /* ---------- this style ---------- */
-.side { padding-top: 24px; }
-.topbar { min-height: 0; padding-top: 20px; padding-bottom: 0; }
-.main { padding-top: 4px; }
-@media (max-width: 900px) { .side { padding-top: 0; background: var(--app-bg); } .topbar { padding-top: 12px; } }
+.side { padding-top: 14px; }
+.topbar { height: 48px; padding: 0 16px 0 var(--pad); }
+.main { margin: 0 8px 8px 0; padding: 24px; border: 1px solid var(--border); border-radius: 16px; }
+.segmented { padding: 0; gap: 20px; background: none; border-radius: 0; box-shadow: inset 0 -1px 0 var(--border); }
+.segmented button { padding: 0 2px; border-radius: 0; background: none; }
+.segmented button:hover:not(:disabled) { background: none; color: var(--text); }
+.segmented button[aria-pressed="true"] { background: none; color: var(--text); box-shadow: inset 0 -2px 0 var(--data); }
+@media (max-width: 900px) {
+  .side { border-bottom: 0; }
+  .topbar { height: auto; padding: 4px 16px 8px; }
+  .main { margin: 0; padding: 16px; border: 0; border-radius: 0; }
+}
