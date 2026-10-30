@@ -104,6 +104,16 @@ function ring(parts, figure, word, size = 88) {
 function bar(parts) {
   return h('div', {class: 'bar', 'aria-hidden': 'true'}, parts.filter((part) => part.value > 0).map((part) => h('span', {class: part.kind, style: {flexGrow: String(part.value)}})));
 }
+// Agent marks from the tackroom site; an agent without one gets its initial.
+const AGENT_MARKS = {
+  claude: 'a-claude-code', 'claude-code': 'a-claude-code', codex: 'a-codex', hermes: 'a-hermes', droid: 'a-droid', factory: 'a-droid',
+  pi: 'a-pi', omp: 'a-omp', qwen: 'a-qwen-code', 'qwen-code': 'a-qwen-code', opencode: 'a-opencode', amp: 'a-amp',
+  cursor: 'a-cursor', copilot: 'a-copilot', grok: 'a-grok', deepseek: 'a-deepseek',
+};
+function agentMark(name, cls = 'ag') {
+  const id = AGENT_MARKS[name];
+  return id ? icon(id, cls) : h('span', {class: `${cls} ag-letter`, 'aria-hidden': 'true', text: (name || '?')[0].toUpperCase()});
+}
 // The view's own controls sit in the top bar, left of Sync.
 function actions(...nodes) { mount(document.getElementById('view-actions'), ...nodes); }
 function chip(kind, iconId, text, title) { return h('span', {class: `chip ${kind}`, title}, icon(iconId), text); }
@@ -344,6 +354,7 @@ function agentCard(agent) {
   const title = [agent.skill_root && tilde(agent.skill_root), live && `${tokens(agent.tokens)} tokens of skill listings (est.)`].filter(Boolean).join(' · ');
   return h('article', {class: agent.enabled ? 'card agent' : 'card agent off'},
     h('div', {class: 'agent-head'},
+      agentMark(agent.name, 'ag ag-card'),
       h('div', {class: 'agent-name'},
         h('h3', {title}, agent.name, local ? h('span', {class: 'tag local', text: 'local'}) : null),
         h('span', {class: `status ${kind}`}, icon(statusIcon), label)),
@@ -377,7 +388,7 @@ function coverage(items, states, noun) {
     h('div', {class: 'legend'}, states.filter((state) => n(state) || ['ok', 'drift', 'missing'].includes(state)).map((state) => h('span', {}, h('span', {class: `cell ${state}`, 'aria-hidden': 'true'}), CELLS[state], h('b', {text: String(n(state))})))));
 }
 function matrixHead(lead) {
-  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col', text: name}))));
+  return h('thead', {}, h('tr', {}, h('th', {class: 'lead', scope: 'col', text: lead}), columns().map((name) => h('th', {scope: 'col'}, h('span', {class: 'col-agent'}, agentMark(name), name)))));
 }
 
 function renderSkills(root) {
@@ -510,7 +521,7 @@ function renderUnmanaged(root) {
         return h('div', {class: 'item'},
           h('span', {class: 'item-icon', title: tilde(item.detail || '')}, icon(link ? 'i-link' : 'i-folder')),
           h('span', {class: 'item-name', title: tilde(item.detail || ''), text: item.name}),
-          h('span', {class: 'chips'}, item.agents.map((agent) => h('span', {class: 'tag', text: agent}))),
+          h('span', {class: 'chips'}, item.agents.map((agent) => h('span', {class: 'tag', title: agent, 'aria-label': agent}, agentMark(agent)))),
           item.hint ? copyButton(tilde(item.hint)) : h('span'));
       })));
   }).filter(Boolean);
@@ -667,7 +678,7 @@ function describeSchedule(job) {
   return `${order.map((day) => DAY_NAMES[day]).join(', ')} ${time}${zone}`;
 }
 const PAUSED = ['disabled', 'paused', 'not_loaded'];
-const SOURCE_ICONS = {launchd: 'i-launchd', crontab: 'i-crontab', systemd: 'i-gear', hermes: 'i-robot', codex: 'i-terminal', 'claude-desktop': 'i-app', 'claude-cloud': 'i-cloud', openbot: 'i-robot'};
+const SOURCE_ICONS = {launchd: 'i-launchd', crontab: 'i-crontab', systemd: 'i-gear', hermes: 'a-hermes', codex: 'a-codex', 'claude-desktop': 'a-claude-code', 'claude-cloud': 'a-claude-code', openbot: 'i-robot'};
 const HEALTH = {ok: ['i-ok', 'Healthy'], idle: ['i-idle', 'No result'], warn: ['i-warn', 'Last run failed'], fail: ['i-fail', 'Failing'], paused: ['i-pause', 'Paused']};
 const HEALTH_ORDER = ['ok', 'idle', 'warn', 'fail', 'paused'];
 function jobHealth(job) {
@@ -981,7 +992,7 @@ function renderPlan() {
       if (report.RootState && report.RootState !== 'synced') items.push([report.RootState === 'missing' ? 'add' : 'update', `root instructions (${report.RootState})`]);
       if (!items.length) items.push(['note', report.Synced ? 'up to date' : 'refresh native config']);
     }
-    body.push(h('div', {class: 'plan-agent'}, h('h3', {text: report.Name}), h('ul', {}, items.map(([verb, text]) => h('li', {}, h('span', {class: `verb ${verb}`, text: verb}), h('span', {text}))))));
+    body.push(h('div', {class: 'plan-agent'}, h('h3', {}, agentMark(report.Name), report.Name), h('ul', {}, items.map(([verb, text]) => h('li', {}, h('span', {class: `verb ${verb}`, text: verb}), h('span', {text}))))));
   }
   const destructive = plan.destructive || [];
   if (destructive.length) {
