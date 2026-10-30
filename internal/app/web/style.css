@@ -1,31 +1,35 @@
-/* Achromatic ledger. Open-plane shell: a 256px labelled sidebar on a blue-grey ledger ground, no top bar (a breadcrumb row instead), white panels with a 1px edge.
-   Ink chrome with a near-black primary; the one hue, #1d5fbf, goes only on the run marks of "Next 24 hours". Grid: 256 + fluid canvas, 32px gutter, one 12px gap. */
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("./fonts/geist-sans-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
-@font-face { font-family: "Geist Mono"; src: url("./fonts/geist-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+/* Data terminal. A 56px icon rail on a #171719 ground; cards a step darker than the ground, lifted by one soft shadow instead of a border.
+   Every figure in IBM Plex Mono so counts and times stack; the text is Public Sans at 13px. Every selection is the same 1px #4a8ad6 line, as wide or as tall as what it marks.
+   Run marks in near-white, trouble in the negative red. Grid: 56 + fluid canvas, 32px gutter, one 24px gap. */
+@font-face { font-family: "Public Sans"; src: url("./fonts/public-sans-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("./fonts/public-sans-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("./fonts/public-sans-latin-600-normal.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Public Sans"; src: url("./fonts/public-sans-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("./fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); font-weight: 500; font-display: swap; }
 :root {
-  color-scheme: light;
-  --app-bg: #f2f4f7; --side-bg: #f2f4f7; --top-bg: transparent; --canvas-bg: transparent;
-  --surface: #ffffff; --raised: #f4f5f7; --active: #e3e6ea;
-  --border: #e3e6ea; --rule: #eef0f2; --control: #cfd3d8;
-  --text: #0a0a0a; --muted: #565a61; --faint: #63676e;
-  --primary: #141414; --primary-ink: #ffffff; --focus: #1d5fbf;
-  --data: #1d5fbf; --switch-on: #141414;
-  --positive: #2e7d32; --negative: #c4242a; --warning: #92400e;
-  --pill-positive-bg: #dcfae5; --pill-positive-ink: #04250e;
-  --pill-negative-bg: #ffedea; --pill-negative-ink: #831c1e;
-  --pill-warning-bg: #fffbeb; --pill-warning-ink: #92400e;
-  --pill-neutral-bg: #eeeff1; --pill-neutral-ink: #3d3d3d;
-  --code-bg: #111214; --code-text: #e8e9eb;
-  --float-shadow: 0 8px 24px rgba(10, 10, 10, .08);
-  --radius-card: 8px; --radius-control: 6px; --radius-chip: 4px;
-  --gap: 12px; --pad: 32px; --card-pad: 20px;
-  --row-height: 44px; --control-height: 36px; --sidebar-width: 256px;
-  --font: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
-  --figure-font: var(--font);
-  --fs-title: 24px; --fs-section: 16px; --fs-kpi: 30px; --fs-body: 14px; --fs-small: 12px; --kpi-weight: 400;
+  color-scheme: dark;
+  --app-bg: #171719; --side-bg: #171719; --top-bg: #171719; --canvas-bg: #171719;
+  --surface: #131217; --raised: #212023; --active: transparent;
+  --border: #26252a; --rule: #1f1e23; --control: #3a3a3e;
+  --text: #ffffff; --muted: #b4b4b8; --faint: #919399;
+  --primary: #ffffff; --primary-ink: #0b0b0c; --focus: #4a8ad6; --line: #4a8ad6;
+  --data: #e9e9ec; --switch-on: #f2f2f3;
+  --positive: #44a282; --negative: #e5566f; --warning: #d9a441;
+  --pill-positive-bg: #1b2828; --pill-positive-ink: #5fc39c;
+  --pill-negative-bg: #2c1a20; --pill-negative-ink: #f07a8e;
+  --pill-warning-bg: #2a2416; --pill-warning-ink: #d9a441;
+  --pill-neutral-bg: #212023; --pill-neutral-ink: #bdbdc0;
+  --code-bg: #0d0d10; --code-text: #e6e6e8;
+  --float-shadow: 0 12px 28px rgba(0, 0, 0, .45);
+  --card-shadow: 0 12px 28px rgba(0, 0, 0, .2);
+  --radius-card: 6px; --radius-control: 999px; --radius-chip: 4px;
+  --gap: 24px; --pad: 32px; --card-pad: 20px;
+  --row-height: 42px; --control-height: 34px; --sidebar-width: 56px;
+  --font: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --figure-font: var(--font-mono);
+  --fs-title: 26px; --fs-section: 16px; --fs-kpi: 20px; --fs-body: 13px; --fs-small: 12px; --kpi-weight: 400;
 }
 
 /* ---------- base ---------- */
@@ -351,7 +355,42 @@ button.cell:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } button:active:not(:disabled) { transform: none; } }
 
 /* ---------- this style ---------- */
-.side { padding-top: 24px; }
-.topbar { min-height: 0; padding-top: 20px; padding-bottom: 0; }
-.main { padding-top: 4px; }
-@media (max-width: 900px) { .side { padding-top: 0; background: var(--app-bg); } .topbar { padding-top: 12px; } }
+.panel-block, .kpis, .stats, .card, .matrix-wrap, .items, .attention ul, .attention > p { border-color: transparent; box-shadow: var(--card-shadow); }
+.card.off { box-shadow: none; border-color: var(--border); }
+.kpi + .kpi, .stat + .stat { border-left-color: var(--border); }
+.stamp, .strip-hour, .strip-now, .strip-later, .block-meta, .count, .grid-table td.fig { font-family: var(--font-mono); }
+.side { align-items: center; gap: 16px; padding: 14px 0; border-right: 1px solid var(--border); }
+.side-head { justify-items: center; padding: 0; }
+.brand span, .scope { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.mark { width: 26px; height: 26px; }
+.tabs { gap: 6px; }
+.tabs a { position: relative; justify-content: center; width: 40px; height: 40px; min-height: 0; padding: 0; color: var(--faint); background: none; }
+.tabs a:hover { color: var(--text); background: none; }
+.tabs a[aria-current="page"] { color: var(--text); background: none; }
+.tabs a[aria-current="page"]::after { content: ""; position: absolute; right: -8px; top: 10px; bottom: 10px; width: 1px; background: var(--line); }
+.tabs .ico { width: 18px; height: 18px; }
+.tabs .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.tabs .count { display: none; }
+.tabs .count.alert { display: block; position: absolute; top: 1px; right: -2px; min-width: 16px; padding: 0 3px; border-radius: 99px; background: var(--pill-negative-bg); color: var(--pill-negative-ink); font-size: 11px; line-height: 16px; text-align: center; }
+.menu summary { justify-content: center; width: 40px; padding: 0; }
+.menu summary .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.menu-list { left: 48px; bottom: 0; }
+.topbar { min-height: 0; padding-top: 22px; padding-bottom: 0; }
+.main { padding-top: 6px; }
+.segmented { padding: 0; gap: 18px; background: none; }
+.segmented button { padding: 0 2px; border-radius: 0; background: none; }
+.segmented button:hover:not(:disabled) { background: none; color: var(--text); }
+.segmented button[aria-pressed="true"] { background: none; color: var(--text); box-shadow: inset 0 -1px 0 var(--line); }
+.grid-table tbody tr.row:hover td { background: var(--raised); }
+@media (max-width: 900px) {
+  .side { flex-direction: row; align-items: center; padding: 0 8px 0 16px; border-right: 0; }
+  .side-head { display: flex; justify-items: start; }
+  .brand span { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  body.nav-open .tabs a { width: auto; height: 44px; justify-content: flex-start; padding: 0 10px; }
+  body.nav-open .tabs .label, body.nav-open .menu summary .label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+  body.nav-open .tabs .count { display: inline; position: static; background: none; color: var(--faint); }
+  body.nav-open .tabs a[aria-current="page"]::after { right: auto; left: 0; top: 12px; bottom: 12px; }
+  .menu summary { width: auto; justify-content: flex-start; padding: 0 10px; }
+  .menu-list { left: 0; }
+  .topbar { padding-top: 12px; }
+}
