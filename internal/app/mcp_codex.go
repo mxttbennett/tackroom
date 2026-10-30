@@ -1,12 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
 func patchCodexMCPServer(target mcpTarget, server mcpServerConfig, home string) error {
@@ -35,7 +37,7 @@ func patchCodexMCPServer(target mcpTarget, server mcpServerConfig, home string) 
 			return err
 		}
 	}
-	updated := upsertTOMLSectionIncludingDescendants(content, header, keepNativeCodexKeys(content, header, section))
+	updated := upsertTOMLSectionIncludingDescendants(content, header, keepNativeCodexKeys(content, server.Name, section))
 	if updated == content {
 		return nil
 	}
@@ -48,48 +50,53 @@ func patchCodexMCPServer(target mcpTarget, server mcpServerConfig, home string) 
 	return nil
 }
 
-// keepNativeCodexKeys carries over Codex keys tackroom does not render (env_vars, startup_timeout_sec, tools.*) so a rewrite cannot drop them.
-func keepNativeCodexKeys(content string, header string, section string) string {
-	start := indexTOMLSectionHeader(content, header)
-	if start == -1 {
+var codexManagedKeys = map[string]struct{}{
+	"command": {}, "args": {}, "env": {},
+	"url": {}, "bearer_token_env_var": {}, "env_http_headers": {}, "http_headers": {}, "headers": {},
+}
+
+// keepNativeCodexKeys carries over Codex keys tackroom does not manage (env_vars, startup_timeout_sec, tools.*) so a rewrite cannot drop them.
+func keepNativeCodexKeys(content string, name string, section string) string {
+	entry, ok, err := decodeCodexMCPEntry("", []byte(content), name)
+	if !ok || (err != nil && !errors.Is(err, errCodexEntryRepairable)) {
 		return section
 	}
-	top, _ := extractTOMLSection(content, header)
-	owned := parseTOMLBlockValues(section)
-	isOwned := func(key string) bool {
-		_, ok := owned[strings.SplitN(key, ".", 2)[0]]
-		return ok
-	}
-	native := parseTOMLBlockValues(top)
-	keys := make([]string, 0, len(native))
-	for key := range native {
-		if !isOwned(key) {
-			keys = append(keys, key)
+	extras := map[string]interface{}{}
+	for key, value := range entry {
+		if _, managed := codexManagedKeys[key]; managed {
+			continue
 		}
+		// The upsert leaves [[...]] descendants in place, so re-emitting them would duplicate them.
+		if _, tables := value.([]map[string]interface{}); tables {
+			continue
+		}
+		extras[key] = value
 	}
-	sort.Strings(keys)
+	if len(extras) == 0 {
+		return section
+	}
+	var encoded bytes.Buffer
+	enc := toml.NewEncoder(&encoded)
+	enc.Indent = ""
+	if err := enc.Encode(map[string]interface{}{name: extras}); err != nil {
+		return section
+	}
 	var out strings.Builder
 	out.WriteString(strings.TrimRight(section, "\n") + "\n")
-	for _, key := range keys {
-		fmt.Fprintf(&out, "%s = %s\n", key, native[key])
+	for _, line := range strings.Split(strings.TrimRight(encoded.String(), "\n"), "\n") {
+		switch {
+		case line == "["+name+"]":
+			continue
+		case strings.HasPrefix(line, "[["):
+			line = "[[mcp_servers." + line[2:]
+		case strings.HasPrefix(line, "["):
+			line = "[mcp_servers." + line[1:]
+		}
+		if strings.HasPrefix(line, "[") {
+			out.WriteString("\n")
+		}
+		out.WriteString(line + "\n")
 	}
 	out.WriteString("\n")
-	prefix := strings.TrimSuffix(header, "]") + "."
-	descendants := content[start+len(top) : endTOMLSectionIncludingDescendants(content, start, header)]
-	for strings.TrimSpace(descendants) != "" {
-		end := len(descendants)
-		if next := indexNextTOMLHeader(descendants[1:]); next != -1 {
-			end = next + 1
-		}
-		chunk := descendants[:end]
-		descendants = descendants[end:]
-		name := strings.TrimPrefix(strings.TrimSpace(strings.SplitN(chunk, "\n", 2)[0]), prefix)
-		if closing := strings.Index(name, "]"); closing != -1 {
-			name = name[:closing]
-		}
-		if !isOwned(name) {
-			out.WriteString(strings.TrimRight(chunk, "\n") + "\n\n")
-		}
-	}
 	return out.String()
 }
